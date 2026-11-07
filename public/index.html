@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Starly</title>
+  <meta name="description" content="Aprende una disciplina nueva a partir de otra que ya dominas.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 6 L62 36 L94 38 L69 58 L78 90 L50 72 L22 90 L31 58 L6 38 L38 36 Z' fill='%23ffc22e' stroke='%23d99a00' stroke-width='5' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@500;700;800&display=swap">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="app">
+  <nav class="side" aria-label="Secciones">
+    <div class="brand"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#star"></use></svg><span>starly</span></div>
+    <div id="sideNav"></div>
+  </nav>
+  <main class="main"><div class="main-inner" id="view"></div></main>
+  <aside class="panel" id="panel" aria-label="Tu progreso"></aside>
+</div>
+<nav class="tabbar" id="tabbar" aria-label="Secciones"></nav>
+<div class="toast" id="toast" hidden></div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="star" viewBox="0 0 100 100">
+      <path d="M50 6 L62 36 L94 38 L69 58 L78 90 L50 72 L22 90 L31 58 L6 38 L38 36 Z" fill="var(--yellow)" stroke="var(--yellow-d)" stroke-width="5" stroke-linejoin="round"/>
+      <ellipse cx="41" cy="50" rx="5" ry="7" fill="#1e2a36"/><ellipse cx="59" cy="50" rx="5" ry="7" fill="#1e2a36"/>
+      <circle cx="42.5" cy="47.5" r="1.8" fill="#fff"/><circle cx="60.5" cy="47.5" r="1.8" fill="#fff"/>
+      <path d="M42 61 Q50 68 58 61" fill="none" stroke="#1e2a36" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="33" cy="60" r="4" fill="#ff8fa8" opacity=".7"/><circle cx="67" cy="60" r="4" fill="#ff8fa8" opacity=".7"/>
+    </symbol>
+    <symbol id="frog" viewBox="0 0 100 100">
+      <ellipse cx="50" cy="62" rx="36" ry="28" fill="#4cbf55" stroke="#2a8f36" stroke-width="4"/>
+      <circle cx="32" cy="34" r="14" fill="#4cbf55" stroke="#2a8f36" stroke-width="4"/><circle cx="68" cy="34" r="14" fill="#4cbf55" stroke="#2a8f36" stroke-width="4"/>
+      <circle cx="32" cy="33" r="8" fill="#fff"/><circle cx="68" cy="33" r="8" fill="#fff"/>
+      <circle cx="34" cy="34" r="4.5" fill="#1e2a36"/><circle cx="70" cy="34" r="4.5" fill="#1e2a36"/>
+      <path d="M34 64 Q50 78 66 64" fill="none" stroke="#1e3a22" stroke-width="4" stroke-linecap="round"/>
+      <ellipse cx="50" cy="74" rx="20" ry="9" fill="#bdf0b0" opacity=".7"/>
+      <circle cx="26" cy="60" r="4" fill="#ff8fa8" opacity=".6"/><circle cx="74" cy="60" r="4" fill="#ff8fa8" opacity=".6"/>
+    </symbol>
+    <symbol id="i-games" viewBox="0 0 32 32"><rect x="3" y="3" width="11" height="11" rx="3" fill="var(--green)"/><rect x="18" y="3" width="11" height="11" rx="3" fill="var(--yellow)"/><rect x="3" y="18" width="11" height="11" rx="3" fill="var(--blue)"/><rect x="18" y="18" width="11" height="11" rx="3" fill="var(--pink)"/></symbol>
+    <symbol id="i-ideas" viewBox="0 0 32 32"><path d="M8 9 L24 9 M8 9 L24 23 M8 23 L24 16" stroke="var(--line-strong)" stroke-width="2.5"/><path d="M8 9 L24 9" stroke="var(--green)" stroke-width="3"/><path d="M8 23 L24 16" stroke="var(--pink)" stroke-width="3" stroke-dasharray="3 3"/><circle cx="7" cy="9" r="4.5" fill="var(--blue)"/><circle cx="7" cy="23" r="4.5" fill="var(--blue)"/><circle cx="25" cy="9" r="4.5" fill="var(--yellow)"/><circle cx="25" cy="16" r="4.5" fill="var(--yellow)"/><circle cx="25" cy="23" r="4.5" fill="var(--yellow)"/></symbol>
+    <symbol id="i-net" viewBox="0 0 32 32"><path d="M16 16 L6 7 M16 16 L27 9 M16 16 L9 27 M16 16 L26 25" stroke="var(--green)" stroke-width="3"/><circle cx="16" cy="16" r="6" fill="var(--green)"/><circle cx="6" cy="7" r="3.5" fill="var(--blue)"/><circle cx="27" cy="9" r="4" fill="var(--yellow)"/><circle cx="9" cy="27" r="3" fill="var(--pink)"/><circle cx="26" cy="25" r="3.5" fill="var(--blue)"/></symbol>
+    <symbol id="i-cup" viewBox="0 0 32 32"><path d="M9 4 H23 V12 A7 7 0 0 1 9 12 Z" fill="var(--yellow)" stroke="var(--yellow-d)" stroke-width="2"/><path d="M9 7 H4 A5 5 0 0 0 9 14 M23 7 H28 A5 5 0 0 1 23 14" fill="none" stroke="var(--yellow-d)" stroke-width="2.5"/><rect x="14" y="18" width="4" height="5" fill="var(--yellow-d)"/><rect x="9" y="23" width="14" height="5" rx="2" fill="var(--yellow-d)"/></symbol>
+    <symbol id="i-frog" viewBox="0 0 100 100"><use href="#frog"/></symbol>
+    <symbol id="i-fire" viewBox="0 0 32 32"><path d="M16 3 C18 10 26 12 26 20 A10 10 0 0 1 6 20 C6 15 9 12 11 10 C11 14 13 16 15 16 C14 11 14 7 16 3 Z" fill="#ff9a3c"/><path d="M16 16 C17 19 21 20 21 23 A5 5 0 0 1 11 23 C11 20 14 19 16 16 Z" fill="var(--yellow)"/></symbol>
+    <symbol id="i-xp" viewBox="0 0 32 32"><path d="M18 3 L7 18 H15 L13 29 L25 13 H17 Z" fill="var(--yellow)" stroke="var(--yellow-d)" stroke-width="2" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<script src="js/app.js"></script>
+</body>
+</html>

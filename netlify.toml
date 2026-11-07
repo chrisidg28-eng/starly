@@ -1,0 +1,4 @@
+# Netlify: sirve public/ y la función de IA de netlify/edge-functions/.
+[build]
+  publish = "public"
+  command = "echo 'Sitio estático: no hay que compilar'"

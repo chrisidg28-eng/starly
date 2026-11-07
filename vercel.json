@@ -1,0 +1,6 @@
+{
+  "outputDirectory": "public",
+  "functions": {
+    "api/generar-ruta.py": { "maxDuration": 300 }
+  }
+}
