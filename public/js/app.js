@@ -32,11 +32,38 @@ const EXAMPLE = {
 };
 
 const PLAYERS = [
-  ["Rita Nenúfar","#4f9a33"],["Bruno Croac","#0082b2"],["Lupe Charca","#c4672a"],["Teo Sapito","#8f8812"],
-  ["Sofi Juncos","#00648a"],["Memo Libélula","#3d7f27"],["Ana Lirio","#ef8c47"],["Nico Renacuajo","#5f6b74"],
-  ["Vera Musgo","#74a957"],["Pablo Brinco","#b85f24"],["Isa Garza","#1a9fd1"],["Gael Estanque","#a39c12"],
-  ["Luz Totora","#d97a3a"],["Omar Salto","#3a7f8f"]
+  ["Valeria Ríos","#5b6cff"],["Diego Montes","#0082b2"],["Lucía Fernández","#c4672a"],["Mateo Herrera","#7a5af8"],
+  ["Sofía Navarro","#00648a"],["Andrés Cruz","#2e8b57"],["Camila Ortega","#d9488f"],["Julián Vega","#5f6b74"],
+  ["Renata Salas","#3a7f8f"],["Pablo Ibarra","#b85f24"],["Isabel Duarte","#1a9fd1"],["Emilio Paredes","#8a6d1f"],
+  ["Martina León","#d97a3a"],["Tomás Aguilar","#4b5d8f"]
 ];
+const LEAGUE_NAME = "Liga Estelar";
+const LEAGUE_DIVISION = "División Cometa";
+
+/* ================= tema claro / oscuro ================= */
+const THEME_KEY = "starly.theme";
+const isDark = () => { const t=document.documentElement.dataset.theme; return t ? t==="dark" : !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches); };
+function toggleTheme(){
+  const next = isDark() ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  try{ localStorage.setItem(THEME_KEY, next); }catch(e){}
+  const m=document.querySelector('meta[name="theme-color"]'); if(m) m.content = next==="dark" ? "#15191c" : "#edebe4";
+  renderNav();
+}
+
+/* ================= sesión (Supabase, la crea auth.html) ================= */
+// Se lee la sesión guardada por supabase-js sin cargar la librería en esta página.
+const SUPABASE_SESSION_KEY = "sb-dxltbofpzyffcbqwpwtw-auth-token";
+function currentUser(){
+  try{
+    const raw=localStorage.getItem(SUPABASE_SESSION_KEY); if(!raw) return null;
+    const s=JSON.parse(raw), u=s && (s.user || (s.currentSession && s.currentSession.user));
+    if(!u || (s.expires_at && s.expires_at*1000 < Date.now() && !s.refresh_token)) return null;
+    const name=(u.user_metadata && (u.user_metadata.nombre || u.user_metadata.name)) || (u.email||"").split("@")[0];
+    return {name, email:u.email||""};
+  }catch(e){ return null; }
+}
+window.addEventListener("storage", e=>{ if(e.key===SUPABASE_SESSION_KEY) render(); });
 
 /* Minijuegos. lives=0 → sin vidas; retry → la pregunta fallada vuelve al final de la fila. */
 const GAMES = {
@@ -53,12 +80,14 @@ const GAMES = {
 };
 
 const TIPS = [
-  "Estoy separando los principios de cada disciplina…",
-  "Busco qué ideas funcionan igual en las dos…",
-  "Encuentro las trampas: lo que parece igual pero no lo es…",
-  "Preparo seis preguntas, una por cada paso…",
-  "Ya casi: armando tu mapa de ideas…"
+  "Separando los principios de cada disciplina…",
+  "Buscando qué ideas funcionan igual en las dos…",
+  "Encontrando las trampas…",
+  "Preparando seis preguntas…",
+  "Ya casi: armando tu mapa…"
 ];
+const PASS_MIN = 4;          // Lección rápida y Ranita: mínimo de aciertos (de 6) para no perder
+const CLIENT_TIMEOUT_MS = 70000;  // si el servidor no responde en este tiempo, se cancela
 
 /* ================= state ================= */
 const LS_KEY = "starly.v1";
@@ -127,8 +156,14 @@ window.addEventListener("hashchange", ()=>{
 
 function renderNav(){
   const cur = view==="jugar" ? "juegos" : view;
-  $("#sideNav").innerHTML = NAV.map(n=>`<button class="nav-btn" data-go="${n.id}" ${cur===n.id?'aria-current="page"':''}>${icon(n.ico)}<span>${n.label}</span></button>`).join("");
+  const dark = isDark(), user = currentUser();
+  const themeLabel = dark ? "Modo claro" : "Modo oscuro";
+  const themeBtn = cls => `<button class="${cls} theme-btn" data-theme-toggle aria-label="Cambiar a ${themeLabel.toLowerCase()}" title="${themeLabel}">${icon(dark?"i-sun":"i-moon")}<span>${themeLabel}</span></button>`;
+  const acct = cls => `<a class="${cls} acct-btn" href="auth.html" title="${user?esc(user.email):"Iniciar sesión"}">${user?`<span class="avatar-mini">${esc(user.name[0]||"?").toUpperCase()}</span>`:icon("i-user")}<span>${user?esc(user.name):"Iniciar sesión"}</span></a>`;
+  $("#sideNav").innerHTML = NAV.map(n=>`<button class="nav-btn" data-go="${n.id}" ${cur===n.id?'aria-current="page"':''}>${icon(n.ico)}<span>${n.label}</span></button>`).join("")
+    + `<div class="side-foot">${acct("nav-btn")}${themeBtn("nav-btn")}</div>`;
   $("#tabbar").innerHTML = NAV.map(n=>`<button class="tab" data-go="${n.id}" ${cur===n.id?'aria-current="page"':''}>${icon(n.ico)}${n.short}</button>`).join("");
+  $("#mobileHead").innerHTML = `<div class="brand">${sym("star")}<span>starly</span></div><div class="mh-actions">${acct("icon-btn")}${themeBtn("icon-btn")}</div>`;
 }
 
 /* ================= league ================= */
@@ -136,7 +171,7 @@ function league(){
   const wk=S.week, day=((new Date().getDay()+6)%7)+1;
   const base=hashStr(wk);
   const picks=[...PLAYERS].sort((x,y)=>hashStr(wk+x[0])-hashStr(wk+y[0])).slice(0,9);
-  const rows=picks.map((p,i)=>{ const speed=20+((base>>i)%7)*9+(hashStr(p[0]+wk)%25); return {name:p[0], color:p[1], xp:Math.round(speed*day*(.8+(hashStr(p[0])%5)/10))}; });
+  const rows=picks.map((p,i)=>{ const speed=20+((base>>>i)%7)*9+(hashStr(p[0]+wk)%25); return {name:p[0], color:p[1], xp:Math.round(speed*day*(.8+(hashStr(p[0])%5)/10))}; });
   rows.push({name:"Tú", color:"var(--blue)", xp:S.weekXp, me:true});
   rows.sort((a,b)=>b.xp-a.xp || (a.me?-1:1));
   return rows;
@@ -147,7 +182,10 @@ const myRank = () => league().findIndex(r=>r.me)+1;
 function renderPanel(){
   const goal=50, pct=Math.min(100, Math.round(S.dayXp/goal*100));
   const disc=Object.entries(S.known).sort((a,b)=>b[1]-a[1]);
+  const user=currentUser();
   $("#panel").innerHTML = `
+    ${user ? `<a class="card acct-card" href="auth.html"><span class="avatar-mini lg">${esc(user.name[0]||"?").toUpperCase()}</span><span style="min-width:0"><b>${esc(user.name)}</b><small class="muted">${esc(user.email)}</small></span></a>`
+      : `<div class="card acct-card guest"><div><b>Guarda tu progreso</b><p class="muted" style="margin:2px 0 10px;font-weight:700;font-size:14px">Crea una cuenta o inicia sesión.</p></div><a class="btn blue block" href="auth.html">Iniciar sesión</a></div>`}
     <div class="statrow card" style="padding:12px">
       <div class="stat" title="Racha de días">${icon("i-fire")}${S.streak}</div>
       <div class="stat" title="XP total">${icon("i-xp")}${S.xp}</div>
@@ -159,7 +197,7 @@ function renderPanel(){
       <div class="goal-bar"><i style="width:${pct}%"></i></div>
     </div>
     <div class="card">
-      <div class="eyebrow">Liga La Laguna</div>
+      <div class="eyebrow">${LEAGUE_NAME}</div>
       <p style="margin:6px 0 10px;font-weight:700">Vas en el puesto <b>#${myRank()}</b> con ${S.weekXp} XP esta semana.</p>
       <button class="btn ghost block" data-go="liga">Ver liga</button>
     </div>
@@ -198,7 +236,7 @@ function gameTile(mode){
     : mode==="castle" ? `${sym("castle",VB.castle)}<span class="mini" style="right:10px">${sym("goblin")}</span>`
     : mode==="astro" ? `${sym("rocket",VB.rocket)}<span class="mini" style="right:10px">${sym("earth")}</span>`
     : sym("frog");
-  return `<button class="tile game ${g.color}" data-pickgame="${mode}"><span class="ico">${art}</span>${g.lives?`<span class="tag">${g.lives} vidas</span>`:""}<h3>${g.name}</h3><p>${g.desc}</p></button>`;
+  return `<button class="tile game g-${mode} ${g.color}" data-pickgame="${mode}"><span class="ico">${art}</span>${g.lives?`<span class="tag">${g.lives} vidas</span>`:""}<h3>${g.name}</h3><p>${g.desc}</p></button>`;
 }
 function viewActivities(){
   const hi = S.xp===0 ? "¡Hola! Soy Starly. Te ayudo a aprender algo nuevo usando lo que ya sabes. ¿Qué hacemos hoy?"
@@ -213,7 +251,7 @@ function viewActivities(){
     <button class="tile" data-go="ideas"><span class="ico">${icon("i-ideas")}</span><span class="tag">Con IA</span><h3>Mi red de ideas</h3><p>Conecta lo que dominas con lo que quieres aprender.</p></button>
     <button class="tile blue" data-go="leccion"><span class="ico">${icon("i-bolt")}</span><h3>Lección rápida</h3><p>Seis preguntas sin juego, directo al grano.</p></button>
     <button class="tile yellow" data-go="red"><span class="ico">${icon("i-net")}</span><h3>Mi red</h3><p>Mira cómo crecen tus disciplinas conectadas.</p></button>
-    <button class="tile orange" data-go="liga"><span class="ico">${icon("i-cup")}</span><h3>Liga La Laguna</h3><p>Suma XP y sube de puesto esta semana.</p></button>
+    <button class="tile orange" data-go="liga"><span class="ico">${icon("i-cup")}</span><h3>${LEAGUE_NAME}</h3><p>Suma XP y sube de puesto esta semana.</p></button>
   </div>`;
 }
 
@@ -223,7 +261,8 @@ function viewPicker(mode){
   const art = mode==="quick" ? icon("i-bolt") : sym(g.ico, VB[g.ico]);
   return `<div class="game-hero">${mode==="quick"?"":`<button class="close" data-go="juegos" aria-label="Volver a actividades">←</button>`}
       <span class="ico">${art}</span><div style="min-width:0"><h1 class="page-title">${g.name}</h1><p class="muted" style="margin:4px 0 0;font-weight:700">${g.desc}</p></div></div>
-    ${g.lives ? `<div class="note">Tienes ${g.lives} vidas. Si fallas una pregunta, pierdes una vida y la pregunta vuelve al final.</div>` : ""}
+    ${g.lives ? `<div class="note">Tienes ${g.lives} vidas. Si fallas una pregunta, pierdes una vida y la pregunta vuelve al final. Si te quedas sin vidas, no sumas XP.</div>`
+      : `<div class="note">Necesitas al menos ${PASS_MIN} de 6 respuestas correctas para sumar XP.</div>`}
     <div class="eyebrow">Elige una ruta</div>
     <div class="route-pick">${allRoutes().map(r=>`<button class="route-btn ${r.id===S.active?"current":""}" data-play="${r.id}" data-mode="${mode}"><span>${esc(r.from)} → ${esc(r.to)}<small>${r.example?"Ruta de ejemplo · 6 preguntas":`6 preguntas · mejor ${r.best}/6`}</small></span><span aria-hidden="true">›</span></button>`).join("")}</div>
     <a href="#ideas" class="btn blue block">Crear una ruta con IA</a>`;
@@ -238,7 +277,7 @@ function viewIdeas(){
     <div class="card thinking"><svg class="starly" viewBox="0 0 100 100" aria-hidden="true"><use href="#star"/></svg>
       <div style="flex:1;min-width:0"><b>Creando el mapa de ${esc(ideas.from)} → ${esc(ideas.to)}</b>
       <p class="muted tip" id="tip" style="margin:4px 0 0;font-weight:700">${TIPS[0]}</p>
-      <div class="load-bar"><i></i></div></div></div>
+      <div class="load-bar"><i></i></div><small class="muted" id="elapsed" style="font-weight:700">Suele tardar menos de 10 segundos</small></div></div>
     <div><button class="btn ghost" id="stopGen">Detener</button></div>`;
   }
   const r = ideas.routeId ? routeById(ideas.routeId) : null;
@@ -353,11 +392,17 @@ async function askServer(payload, signal){
 }
 
 async function generate(from, to){
-  ideas = {...ideas, from, to, status:"loading", error:"", routeId:null, sel:-1, ctl:new AbortController()};
+  // Si ya existe esa ruta, se abre al instante sin llamar a la IA.
+  const same = S.routes.find(r=>r.from.toLowerCase()===from.toLowerCase() && r.to.toLowerCase()===to.toLowerCase());
+  if(same){ ideas = {...ideas, from, to, status:"idle", error:"", routeId:same.id, sel:-1}; render(); toast("Ya tenías esta ruta guardada"); return; }
+  const ctl = new AbortController();
+  ideas = {...ideas, from, to, status:"loading", error:"", routeId:null, sel:-1, ctl, started:Date.now()};
   render();
-  const known = Object.keys(S.known).filter(d=>d.toLowerCase()!==from.toLowerCase() && d.toLowerCase()!==to.toLowerCase());
+  const known = Object.keys(S.known).filter(d=>d.toLowerCase()!==from.toLowerCase() && d.toLowerCase()!==to.toLowerCase()).slice(0,8);
+  let timedOut = false;
+  const timer = setTimeout(()=>{ timedOut=true; ctl.abort(); }, CLIENT_TIMEOUT_MS);
   try{
-    const j = await askServer({from, to, known, steps: STEPS}, ideas.ctl.signal);
+    const j = await askServer({from, to, known, steps: STEPS}, ctl.signal).catch(e=>{ throw (timedOut ? {code:"timeout"} : e); });
     const r = validRoute(j, from, to);
     if(!r){ ideas = {...ideas, status:"idle", error:"La respuesta de la IA vino incompleta. Prueba otra vez o cambia un poco los nombres."}; }
     else { S.routes.push(r); S.active=r.id; S.known[from]=Math.max(S.known[from]||0,40); S.known[to]=S.known[to]||10; save(); ideas = {...ideas, status:"idle", routeId:r.id, sel:-1}; toast("Ruta guardada en Mi red"); }
@@ -366,12 +411,14 @@ async function generate(from, to){
     const msg = code==="cancelled" ? ""
       : code==="no_server" ? "No encuentro el servidor de IA. Mientras tanto puedes jugar la ruta de ejemplo."
       : code==="no_key" ? "Falta la clave GEMINI_API_KEY en el servidor, o no es válida."
-      : code==="rate_limited" ? "Demasiadas solicitudes seguidas. Espera un momento y vuelve a intentarlo."
+      : code==="timeout" ? "La IA tardó demasiado en responder. Vuelve a intentarlo en unos segundos."
+      : code==="rate_limited" ? "La IA está saturada en este momento. Espera unos segundos y vuelve a intentarlo."
       : code==="refused" ? "La IA no pudo trabajar con esas disciplinas. Prueba con otras."
       : code==="bad_json" ? "La respuesta de la IA vino incompleta. Prueba otra vez."
       : "No se pudo crear el mapa. Inténtalo de nuevo.";
     ideas = {...ideas, status:"idle", error:msg};
   }
+  clearTimeout(timer);
   if(view==="ideas") render();
 }
 
@@ -385,7 +432,7 @@ function startGame(id, mode){
   game = {mode, routeId:r.id, total:r.questions.length, queue:r.questions.map((_,i)=>i),
     progress:0, prev:0, lives:cfg.lives, prevLives:cfg.lives, maxLives:cfg.lives,
     answered:false, picked:-1, ok:false, fx:null, done:false, won:false,
-    earned:0, correct:0, first:0, mistakes:0, tries:{},
+    earned:0, correct:0, first:0, mistakes:0, tries:{}, combo:0, lastGain:0,
     orders:r.questions.map(q=>shuffle(q.options.map((_,k)=>k)))};
   const target = mode==="quick" ? "leccion" : "jugar";
   if(view===target){ render(); window.scrollTo(0,0); } else go(target);
@@ -404,9 +451,11 @@ function hud(r){
   const hearts = game.maxLives ? `<div class="hearts" aria-label="${game.lives} vidas">${Array.from({length:game.maxLives},(_,i)=>{
       const lost=i>=game.lives, just=lost && i<game.prevLives && game.fx==="bad";
       return `<svg class="${lost?"lost":""} ${just?"just":""}" viewBox="0 0 32 32" aria-hidden="true"><use href="#heart"/></svg>`; }).join("")}</div>` : "";
+  const combo = game.combo>=2 ? `<span class="combo ${game.fx==="ok"?"bump":""}" aria-label="Racha de ${game.combo} aciertos">${icon("i-fire")}x${game.combo}</span>` : "";
   return `<div class="game-top"><button class="close" id="quit" aria-label="Salir">✕</button>
-    <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i></div>
-    ${hearts}<span class="stat">${icon("i-xp")}${game.earned}</span></div>`;
+    <div class="bar ${game.fx==="ok"?"glow":""}" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><i style="width:${pct}%"></i></div>
+    ${combo}${hearts}<span class="stat xp-stat">${icon("i-xp")}${game.earned}${game.fx==="ok"?`<span class="xp-pop" aria-hidden="true">+${game.lastGain}</span>`:""}</span></div>
+    ${game.fx==="bad" ? `<div class="flash bad" aria-hidden="true"></div>` : game.fx==="ok" ? `<div class="flash ok" aria-hidden="true"></div>` : ""}`;
 }
 
 /* --- escenas: cada actor se dibuja en su posición anterior (data-from) y se anima a la nueva (data-to) --- */
@@ -415,7 +464,7 @@ const actor = (cls, from, to, inner, extra="") => `<div class="actor ${cls}" dat
 function sceneKnight(end){
   const T=game.total, x=i=>6+i*(66/T), gate=78;
   const won=end && game.won;
-  let out=`<div class="scene knight" aria-hidden="true"><div class="sun"></div><div class="hill" style="left:-10%"></div><div class="hill" style="left:45%;height:38%"></div>
+  let out=`<div class="scene knight" aria-hidden="true"><div class="sun"></div><span class="cloud c1"></span><span class="cloud c2"></span><span class="bird b1"></span><span class="bird b2"></span><div class="hill" style="left:-10%"></div><div class="hill" style="left:45%;height:38%"></div>
     <div class="path"></div>${Array.from({length:T+1},(_,i)=>`<span class="stone" style="left:${x(i)}%"></span>`).join("")}
     <div class="castle">${sym("castle",VB.castle)}</div>`;
   for(let i=1;i<=T;i++){
@@ -437,7 +486,7 @@ function sceneCastle(end){
   const castleCls = lost ? "fallen" : game.fx==="bad" ? "hit" : "";
   const cracks=[[16,40],[24,62],[12,72]].slice(0, game.maxLives-game.lives)
     .map(([l,b])=>`<svg class="crack" style="left:${l}%;bottom:${b}px" viewBox="0 0 20 20"><path d="M10 0 L7 7 L12 10 L6 20" fill="none" stroke="#5f594d" stroke-width="2"/></svg>`).join("");
-  let out=`<div class="scene def" aria-hidden="true"><div class="castle ${castleCls}">${sym("castle",VB.castle)}</div>${cracks}`;
+  let out=`<div class="scene def" aria-hidden="true"><span class="cloud c1"></span><span class="cloud c2"></span><div class="castle ${castleCls}">${sym("castle",VB.castle)}</div>${cracks}`;
   if(!end && game.fx==="ok"){
     out+=`<div class="shot go" style="left:24%;width:28px"></div>`;
     out+=actor("foe poof", foeX, foeX, sym("goblin"));
@@ -454,7 +503,7 @@ function sceneCastle(end){
 function sceneAstro(end){
   const T=game.total, x=i=>8+i*(64/T);
   const won=end && game.won;
-  let out=`<div class="scene astro" aria-hidden="true"><div class="earth">${sym("earth")}</div>`;
+  let out=`<div class="scene astro" aria-hidden="true"><span class="twinkle t1"></span><span class="twinkle t2"></span><span class="twinkle t3"></span><span class="twinkle t4"></span><span class="shooting"></span><div class="earth">${sym("earth")}</div>`;
   for(let i=1;i<=T;i++){
     const y = 50 + (i%2 ? -14 : 14);
     if(i>game.progress) out+=actor(`foe ${game.fx==="bad"&&i===game.progress+1?"wobble":""}`, x(i), x(i), sym("asteroid"), `top:${y}%`);
@@ -489,17 +538,17 @@ function viewGame(){
   let body;
   if(game.mode==="frog"){
     body = `<div class="pond" id="pond">
-      <div class="pads">${order.map((k,pos)=>`<button class="pad ${optCls(k)}" data-pick="${k}" ${game.answered?"disabled":""}><span class="k">${pos+1}</span>${esc(q.options[k])}</button>`).join("")}</div>
+      <div class="pads">${order.map((k,pos)=>`<button class="pad ${optCls(k)} ${game.answered?"":"enter"}" style="--i:${pos}" data-pick="${k}" ${game.answered?"disabled":""}><span class="k">${pos+1}</span>${esc(q.options[k])}</button>`).join("")}</div>
       <div class="home-pad"></div>
       <div class="frog" id="frog"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#frog"/></svg></div></div>`;
   } else {
     body = `${scene(false)}
-      <div class="opts">${order.map((k,pos)=>`<button class="opt ${optCls(k)}" data-pick="${k}" ${game.answered?"disabled":""}><span class="k">${pos+1}</span><span>${esc(q.options[k])}</span></button>`).join("")}</div>`;
+      <div class="opts">${order.map((k,pos)=>`<button class="opt ${optCls(k)} ${game.answered?"":"enter"}" style="--i:${pos}" data-pick="${k}" ${game.answered?"disabled":""}><span class="k">${pos+1}</span><span>${esc(q.options[k])}</span></button>`).join("")}</div>`;
   }
   const lastLife = game.maxLives && game.lives<=0;
   const last = lastLife || (game.queue.length===1 && (ok || !GAMES[game.mode].retry));
   return `${hud(r)}
-    <div class="qcard"><div style="display:flex;flex-wrap:wrap;gap:8px"><span class="chip step-chip">Paso ${step.n} · ${step.name}</span>${retry?`<span class="chip retry-chip">Segundo intento</span>`:""}</div>
+    <div class="qcard ${game.answered?"":"enter"}"><div style="display:flex;flex-wrap:wrap;gap:8px"><span class="chip step-chip">Paso ${step.n} · ${step.name}</span>${retry?`<span class="chip retry-chip">Segundo intento</span>`:""}</div>
     <h2 class="qtext">${esc(q.q)}</h2></div>
     ${body}
     ${game.answered ? `<div class="feedback ${ok?"ok":"bad"}" aria-live="polite"><h3>${ok?`${FEED[game.mode].ok} +${gained} XP`:FEED[game.mode].bad}</h3>
@@ -510,8 +559,8 @@ function viewGame(){
 }
 
 const RESULT_TITLE = {
-  quick:  w=>"¡Lección completada!",
-  frog:   w=>"¡Lección completada!",
+  quick:  w=>w?"¡Lección completada!":"Lección no superada",
+  frog:   w=>w?"¡Lección completada!":"La ranita no llegó a la orilla",
   knight: w=>w?"¡Salvaste a la princesa!":"El caballero tuvo que retirarse",
   castle: w=>w?"¡El castillo resiste!":"El castillo cayó",
   astro:  w=>w?"¡Aterrizaje en la Tierra!":"El cohete se quedó sin escudo"
@@ -522,16 +571,17 @@ function confetti(){
 }
 function viewResult(r){
   const perfect = game.mistakes===0;
-  const title = perfect && (game.mode==="quick"||game.mode==="frog") ? "¡Lección perfecta!" : RESULT_TITLE[game.mode](game.won);
-  const sub = !game.won ? "No pasa nada: repite para afianzar lo que fallaste."
+  const simple = game.mode==="quick"||game.mode==="frog";
+  const title = perfect && simple ? "¡Lección perfecta!" : RESULT_TITLE[game.mode](game.won);
+  const sub = !game.won ? (simple ? `Acertaste ${game.correct} de ${game.total}; necesitas ${PASS_MIN} para sumar XP. Esta vez no sumas puntos.` : "Te quedaste sin vidas, así que esta vez no sumas XP. Repite para afianzar lo que fallaste.")
     : perfect ? "Sin un solo error. +5 XP de bonificación." : `Lo lograste con ${game.mistakes} ${game.mistakes===1?"error":"errores"}.`;
-  return `${game.mode==="quick"||game.mode==="frog" ? "" : scene(true)}
-    <div class="result card">${game.won?confetti():""}
-      ${game.mode==="quick"||game.mode==="frog" ? `<svg width="120" height="120" class="starly" aria-hidden="true"><use href="#star"/></svg>` : ""}
+  return `${simple ? "" : scene(true)}
+    <div class="result card ${game.won?"":"lost"}">${game.won?confetti():""}
+      ${simple ? `<svg width="120" height="120" class="starly ${game.won?"":"sad"}" aria-hidden="true"><use href="#star"/></svg>` : ""}
       <h1 class="page-title pop-in">${title}</h1>
       <p class="muted" style="margin:0;font-weight:700">${esc(r.from)} → ${esc(r.to)} · ${sub}</p>
-      <div class="big"><div class="box"><b>XP ganada</b><span>${game.earned}</span></div><div class="box g"><b>A la primera</b><span>${game.first}/${game.total}</span></div></div>
-      <p style="margin:0;font-weight:700">Vas en el puesto <b>#${myRank()}</b> de la Liga La Laguna.</p>
+      <div class="big"><div class="box ${game.won?"":"zero"}"><b>XP ganada</b><span class="countup" data-to="${game.earned}">${game.earned}</span></div><div class="box g"><b>A la primera</b><span>${game.first}/${game.total}</span></div></div>
+      <p style="margin:0;font-weight:700">Vas en el puesto <b>#${myRank()}</b> de la ${LEAGUE_NAME}.</p>
       <div class="actions">
         <button class="btn ghost" data-play="${r.id}" data-mode="${game.mode}">Repetir</button>
         <button class="btn blue" data-go="juegos">Otra actividad</button>
@@ -558,8 +608,8 @@ function pick(k){
     game.answered=true; game.picked=k; game.ok=ok;
     game.prev=game.progress; game.prevLives=game.lives;
     game.tries[qi]=(game.tries[qi]||0)+1;
-    if(ok){ game.correct++; game.progress++; game.earned += game.tries[qi]===1 ? 10 : 5; if(game.tries[qi]===1) game.first++; }
-    else { game.mistakes++; if(game.maxLives) game.lives--; }
+    if(ok){ game.correct++; game.progress++; game.combo++; game.lastGain = game.tries[qi]===1 ? 10 : 5; game.earned += game.lastGain; if(game.tries[qi]===1) game.first++; }
+    else { game.mistakes++; game.combo=0; game.lastGain=0; if(game.maxLives) game.lives--; }
     game.fx = ok ? "ok" : "bad";
     render();
     if(game.mode==="frog"){
@@ -582,11 +632,16 @@ function nextQ(){
   game.answered=false; game.picked=-1; game.fx=null; game.prev=game.progress; game.prevLives=game.lives;
   const lost = game.maxLives && game.lives<=0;
   if(lost || !game.queue.length){
-    game.won = !lost;
+    // Sin vidas = derrota. En los juegos sin vidas se pierde con menos de PASS_MIN aciertos.
+    game.won = !lost && (cfg.lives>0 || game.correct>=PASS_MIN);
     game.prev = game.progress;
-    if(game.won && game.mistakes===0) game.earned+=5;
-    addXp(game.earned, r);
-    const real=S.routes.find(x=>x.id===r.id); if(real){ real.best=Math.max(real.best||0, game.first); real.plays=(real.plays||0)+1; save(); }
+    if(game.won){
+      if(game.mistakes===0) game.earned+=5;
+      addXp(game.earned, r);
+    } else {
+      game.earned = 0;   // si pierdes, no se suman puntos
+    }
+    const real=S.routes.find(x=>x.id===r.id); if(real){ if(game.won) real.best=Math.max(real.best||0, game.first); real.plays=(real.plays||0)+1; save(); }
     game.done=true;
   }
   render(); window.scrollTo({top:0});
@@ -604,45 +659,87 @@ function netData(){
 }
 function viewNet(){
   const {own, names, edges, known}=netData();
-  const W=600, H=440, cx=W/2, cy=H/2, R=names.length<=2?120:Math.min(165, 70+names.length*14);
-  const pos={}; names.forEach((n,i)=>{ const a=-Math.PI/2+i*2*Math.PI/names.length; pos[n]={x:cx+R*Math.cos(a)*1.25, y:cy+R*Math.sin(a)}; });
+  const W=640, H=440, cx=W/2, cy=H/2, R=names.length<=2?130:Math.min(160, 80+names.length*12);
+  const pos={}; names.forEach((n,i)=>{ const a=-Math.PI/2+i*2*Math.PI/names.length; pos[n]={x:cx+R*Math.cos(a)*1.35, y:cy+R*Math.sin(a)}; });
   if(names.length===1) pos[names[0]]={x:cx,y:cy};
-  const colors=["var(--green)","var(--blue)","var(--yellow)","var(--orange)"];
-  const rad=n=>Math.min(46, 16+Math.sqrt(known[n]||0)*2.6);
-  const svg=`<svg class="net" viewBox="0 0 ${W} ${H}" role="img" aria-label="Red de disciplinas">
-    ${edges.map(([a,b])=>`<line class="edge ${netSel&&(netSel===a||netSel===b)?"hot":""}" x1="${pos[a].x}" y1="${pos[a].y}" x2="${pos[b].x}" y2="${pos[b].y}"/>`).join("")}
-    ${names.map((n,i)=>{ const p=pos[n], r=rad(n), c=colors[i%colors.length];
-      return `<g class="nd" tabindex="0" role="button" data-net="${esc(n)}" aria-label="${esc(n)}"><g style="transform-origin:${p.x}px ${p.y}px" class="grow">
-        <circle class="n" cx="${p.x}" cy="${p.y}" r="${r}" fill="${c}" stroke="${netSel===n?"var(--ink)":"var(--bg)"}"/>
-        <text x="${p.x}" y="${p.y+r+20}" text-anchor="middle">${esc(n.length>18?n.slice(0,17)+"…":n)}</text></g></g>`; }).join("")}
+  const colors=["#74c652","#1a9fd1","#ebe43f","#ef8c47","#a98bff","#ff7aa8"];
+  const colorOf = n => colors[names.indexOf(n)%colors.length];
+  const rad=n=>Math.min(38, 14+Math.sqrt(known[n]||0)*2.2);
+  const totalXp = names.reduce((s,n)=>s+(known[n]||0),0);
+  const maxXp = Math.max(1, ...names.map(n=>known[n]||0));
+  // estrellas de fondo fijas (misma posición en cada render)
+  const bg = Array.from({length:46},(_,i)=>{ const h=hashStr("s"+i); return `<circle class="bgstar" cx="${h%W}" cy="${(h>>>10)%H}" r="${(h%3)/2+0.6}" style="animation-delay:${(h%40)/10}s"/>`; }).join("");
+  const curve=(a,b)=>{ const p=pos[a], q=pos[b], mx=(p.x+q.x)/2, my=(p.y+q.y)/2; const dx=q.x-p.x, dy=q.y-p.y; const k=.18; return `M${p.x} ${p.y} Q${mx-dy*k} ${my+dx*k} ${q.x} ${q.y}`; };
+  const svg=`<svg class="net" viewBox="0 0 ${W} ${H}" role="img" aria-label="Constelación de disciplinas">
+    <defs><filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+    ${bg}
+    ${edges.map(([a,b],i)=>{ const hot=netSel&&(netSel===a||netSel===b); return `<path class="edge ${hot?"hot":""} ${netSel&&!hot?"dim":""}" d="${curve(a,b)}" style="animation-delay:${i*.12}s"/><path class="edge-flow ${hot?"hot":""}" d="${curve(a,b)}"/>`; }).join("")}
+    ${names.map((n,i)=>{ const p=pos[n], r=rad(n), c=colorOf(n), sel=netSel===n, dim=netSel&&!sel&&!edges.some(e=>e.includes(n)&&e.includes(netSel));
+      const label=n.length>18?n.slice(0,17)+"…":n, lw=label.length*7.6+22;
+      return `<g class="nd ${sel?"sel":""} ${dim?"dim":""}" tabindex="0" role="button" data-net="${esc(n)}" aria-label="${esc(n)}, ${known[n]||0} XP" aria-pressed="${sel}">
+        <g class="grow" style="transform-origin:${p.x}px ${p.y}px;animation-delay:${i*.08}s">
+        <circle class="halo" cx="${p.x}" cy="${p.y}" r="${r+12}" fill="${c}"/>
+        <circle class="n" cx="${p.x}" cy="${p.y}" r="${r}" fill="${c}" filter="url(#glow)"/>
+        <circle class="core" cx="${p.x-r*.3}" cy="${p.y-r*.3}" r="${r*.28}"/>
+        <rect class="pill" x="${p.x-lw/2}" y="${p.y+r+10}" width="${lw}" height="24" rx="12"/>
+        <text x="${p.x}" y="${p.y+r+26.5}" text-anchor="middle">${esc(label)}</text></g></g>`; }).join("")}
   </svg>`;
   let info="";
   if(netSel){
     const rel=(own?S.routes:[]).filter(r=>r.from===netSel||r.to===netSel);
-    info=`<div class="card rise"><div class="eyebrow">Disciplina</div><h2 style="font-size:26px">${esc(netSel)}</h2>
-      <p style="margin:4px 0 10px;font-weight:700">${known[netSel]||0} XP aprendidos · ${edges.filter(e=>e.includes(netSel)).length} conexiones</p>
+    const conn=[...new Set(edges.filter(e=>e.includes(netSel)).map(e=>e[0]===netSel?e[1]:e[0]))];
+    info=`<div class="card net-info rise" style="--c:${colorOf(netSel)}"><div class="net-info-head"><span class="net-dot"></span><div style="flex:1;min-width:0"><div class="eyebrow">Disciplina</div><h2>${esc(netSel)}</h2></div><button class="close" data-net="${esc(netSel)}" aria-label="Cerrar">✕</button></div>
+      <div class="net-kpis"><div><b>${known[netSel]||0}</b><span>XP</span></div><div><b>${conn.length}</b><span>${conn.length===1?"conexión":"conexiones"}</span></div></div>
+      ${conn.length?`<div class="disc">${conn.map(c=>`<button class="chip" data-net="${esc(c)}"><i class="net-dot sm" style="--c:${colorOf(c)}"></i>${esc(c)}</button>`).join("")}</div>`:""}
       ${rel.length?`<div class="route-pick">${rel.map(r=>`<button class="route-btn" data-open="${r.id}"><span>${esc(r.from)} → ${esc(r.to)}<small>Ver mapa de ideas</small></span><span aria-hidden="true">›</span></button>`).join("")}</div>`:""}</div>`;
   }
-  return `${topStats()}<h1 class="page-title">Mi red</h1>
-  ${greet(own ? `Tienes ${names.length} disciplinas conectadas. Cada nodo crece con la XP que ganas en él.` : "Así se verá tu red. Este es un ejemplo: crea tu primera ruta y aquí aparecerán tus disciplinas.")}
-  <div class="card" style="padding:10px;position:relative">${own?"":`<span class="chip" style="position:absolute;top:12px;left:12px">Ejemplo</span>`}${svg}</div>
+  const list = [...names].sort((a,b)=>(known[b]||0)-(known[a]||0));
+  return `${topStats()}<div><h1 class="page-title">Mi red</h1>
+    <p class="muted" style="margin:4px 0 0;font-weight:700">${own ? "Tu constelación de conocimiento. Cada estrella crece con la XP que ganas en ella." : "Así se verá tu red. Crea tu primera ruta y aquí aparecerán tus disciplinas."}</p></div>
+  <div class="net-stats">
+    <div class="net-stat"><b>${names.length}</b><span>Disciplinas</span></div>
+    <div class="net-stat"><b>${edges.length}</b><span>Conexiones</span></div>
+    <div class="net-stat"><b>${totalXp}</b><span>XP aprendida</span></div>
+  </div>
+  <div class="net-card">${own?"":`<span class="chip net-badge">Ejemplo</span>`}${svg}<p class="net-hint">Toca una estrella para ver sus conexiones</p></div>
   ${info}
+  <div class="card"><div class="eyebrow">Tus disciplinas</div>
+    <ul class="disc-list">${list.map(n=>`<li><button data-net="${esc(n)}" aria-pressed="${netSel===n}"><i class="net-dot sm" style="--c:${colorOf(n)}"></i><span class="dl-name">${esc(n)}</span><span class="dl-bar"><i style="width:${Math.round((known[n]||0)/maxXp*100)}%;background:${colorOf(n)}"></i></span><span class="dl-xp">${known[n]||0} XP</span></button></li>`).join("")}</ul></div>
   ${own?"":`<a href="#ideas" class="btn block">Crear mi primera ruta</a>`}`;
 }
 
 /* ---------- Liga ---------- */
 function viewLeague(){
   const rows=league(); const n=rows.length;
-  const now=new Date(); const left=7-((now.getDay()+6)%7);
-  return `${topStats()}<div class="league-head"><svg aria-hidden="true"><use href="#i-cup"/></svg><div><h1 class="page-title">Liga La Laguna</h1>
-    <p class="muted" style="margin:2px 0 0;font-weight:700">Los 3 primeros suben de liga. Quedan ${left} ${left===1?"día":"días"}.</p></div></div>
-    <div class="card" style="padding:10px">
-    <ol class="rows">${rows.map((r,i)=>{
-      const cls=(i<3?"up":i>=n-2?"down":"")+(r.me?" me":"");
-      const zone = i===3?`<li class="zone up" aria-hidden="true">Zona de ascenso ↑</li>`: i===n-2?`<li class="zone down" aria-hidden="true">Zona de descenso ↓</li>`:"";
-      return `${zone}<li class="row ${cls}"><span class="pos">${i+1}</span><span class="avatar" style="background:${r.color}">${esc(r.name[0])}</span><span>${esc(r.name)}${r.me?' <span class="muted">(tú)</span>':""}</span><span class="xp">${r.xp} XP</span></li>`;
-    }).join("")}</ol></div>
-    <button class="btn block" data-go="juegos">Jugar y sumar XP</button>`;
+  const now=new Date(); const end=new Date(now); end.setDate(now.getDate()+(7-((now.getDay()+6)%7))); end.setHours(0,0,0,0);
+  const ms=end-now, dLeft=Math.floor(ms/864e5), hLeft=Math.floor(ms%864e5/36e5);
+  const top=rows[0].xp||1, me=rows.findIndex(r=>r.me);
+  const ini = name => name.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+  const first = r => r.me ? "Tú" : r.name.split(" ")[0];
+  const medal=["gold","silver","bronze"];
+  const podium=[1,0,2].map(i=>{ const r=rows[i]; if(!r) return ""; return `<div class="pod p${i+1} ${r.me?"me":""}" style="animation-delay:${[.15,0,.3][i]}s">
+      <span class="pod-av ${medal[i]}" style="--av:${r.color}">${esc(r.me?"Tú":ini(r.name))}<i>${i+1}</i></span>
+      <b>${esc(first(r))}</b><small>${r.xp} XP</small><div class="pod-base ${medal[i]}"></div></div>`; }).join("");
+  const gap = me>0 ? rows[me-1].xp-rows[me].xp+1 : 0;
+  return `${topStats()}
+    <div class="lg-head">
+      <div><div class="lg-kicker">${LEAGUE_DIVISION}</div><h1 class="page-title">${LEAGUE_NAME}</h1></div>
+      <div class="lg-timer" title="La liga termina el domingo a medianoche"><span>Termina en</span><b>${dLeft} d ${hLeft} h</b></div>
+    </div>
+    <div class="lg-me card">
+      <div class="lg-me-rank"><span class="lg-me-pos">#${me+1}</span><span class="muted">de ${n}</span></div>
+      <p>${me===0 ? "Vas en primer lugar. ¡Defiende tu puesto!" : `Te faltan <b>${gap} XP</b> para superar a ${esc(first(rows[me-1]))}.`}</p>
+    </div>
+    <div class="podium">${podium}</div>
+    <div class="card lg-table">
+      <ol class="lg-rows">${rows.map((r,i)=>{
+        const zone = i===3?`<li class="lg-zone up" aria-hidden="true"><span>Los 3 primeros ascienden</span></li>`: i===n-2?`<li class="lg-zone down" aria-hidden="true"><span>Zona de descenso</span></li>`:"";
+        return `${zone}<li class="lg-row ${r.me?"me":""} ${i<3?"top":""} ${i>=n-2?"low":""}" style="animation-delay:${i*.04}s">
+          <span class="lg-pos">${i+1}</span><span class="lg-av" style="--av:${r.color}">${esc(r.me?"Tú":ini(r.name))}</span>
+          <span class="lg-name">${esc(r.me?"Tú":r.name)}<span class="lg-bar"><i style="width:${Math.max(2,Math.round(r.xp/top*100))}%"></i></span></span>
+          <span class="lg-xp">${r.xp}<small> XP</small></span></li>`;
+      }).join("")}</ol></div>
+    <button class="btn blue block" data-go="juegos">Jugar y sumar XP</button>`;
 }
 
 /* ================= events ================= */
@@ -652,8 +749,20 @@ function afterRender(){
   clearInterval(tipTimer); tipTimer=null;
   if(view==="ideas" && ideas.routeId && ideas.status!=="loading"){ drawLinks(); ro=new ResizeObserver(()=>drawLinks()); ro.observe($("#map")); }
   if(view==="ideas" && ideas.status==="loading"){
-    let i=0; tipTimer=setInterval(()=>{ const t=$("#tip"); if(!t){ clearInterval(tipTimer); return; } i=(i+1)%TIPS.length; t.textContent=TIPS[i]; t.classList.remove("tip"); t.offsetWidth; t.classList.add("tip"); }, 3200);
+    let i=0, tick=0; tipTimer=setInterval(()=>{
+      const t=$("#tip"); if(!t){ clearInterval(tipTimer); return; }
+      const s=Math.round((Date.now()-(ideas.started||Date.now()))/1000), el=$("#elapsed");
+      if(el && s>=3) el.textContent = s<15 ? `${s} s` : `${s} s · la IA está ocupada, sigo intentando con otro modelo…`;
+      if(++tick%2===0){ i=(i+1)%TIPS.length; t.textContent=TIPS[i]; t.classList.remove("tip"); t.offsetWidth; t.classList.add("tip"); }
+    }, 1000);
   }
+  // cuenta animada de la XP en la pantalla de resultado
+  document.querySelectorAll(".countup").forEach(el=>{
+    const to=+el.dataset.to||0; if(!to || reducedMotion()) return;
+    const t0=performance.now(), dur=900; el.textContent="0";
+    const step=now=>{ const k=Math.min(1,(now-t0)/dur); el.textContent=Math.round(to*(1-Math.pow(1-k,3))); if(k<1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  });
   if(game && game.mode==="frog" && !game.done && !game.answered) placeFrog(null,false);
   // anima los actores de la escena de su posición anterior a la nueva
   const movers=[...document.querySelectorAll(".actor[data-to]")].filter(el=>el.dataset.from!==el.dataset.to);
@@ -674,6 +783,7 @@ document.addEventListener("pointerdown", e=>{
 document.addEventListener("click", e=>{
   const t=e.target;
   let b;
+  if(t.closest("[data-theme-toggle]")){ toggleTheme(); return; }
   if((b=t.closest("[data-go]"))){ e.preventDefault(); if(b.dataset.go==="juegos"||b.dataset.go==="leccion") game=null; go(b.dataset.go); return; }
   if((b=t.closest("[data-pickgame]"))){ pendingMode=b.dataset.pickgame; game=null; go("jugar"); return; }
   if((b=t.closest("[data-pair]"))){ const [a,c]=b.dataset.pair.split("|"); $("#fFrom").value=a; $("#fTo").value=c; ideas.from=a; ideas.to=c; return; }

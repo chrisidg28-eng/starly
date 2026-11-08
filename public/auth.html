@@ -4,81 +4,86 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Starly · Cuenta</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 6 L62 36 L94 38 L69 58 L78 90 L50 72 L22 90 L31 58 L6 38 L38 36 Z' fill='%23ebe43f' stroke='%23ef8c47' stroke-width='5' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=Nunito:wght@500;700;800&display=swap" rel="stylesheet">
+<script>
+  // Mismo tema que la app (se guarda en localStorage como "starly.theme")
+  try { var t = localStorage.getItem("starly.theme"); if (t === "dark" || t === "light") document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <style>
   :root {
-    --bg: #eef0fb;
-    --card: #ffffff;
-    --ink: #1b1f3b;
-    --muted: #5d6385;
-    --line: #d8dcf2;
-    --accent: #4b3fe0;
-    --accent-ink: #ffffff;
-    --star: #ffc93c;
-    --err: #b3261e;
-    --ok: #1d7a4b;
+    --bg: #edebe4; --card: #f8f7f3; --ink: #22303a; --muted: #6a6e66; --line: #dbd7ca; --field: #e5e2d8;
+    --accent: #0082b2; --accent-d: #00648a; --accent-ink: #ffffff; --orange: #ef8c47;
+    --err: #b3401e; --ok: #3d7f27; color-scheme: light;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #12142b;
-      --card: #1b1e3d;
-      --ink: #eef0ff;
-      --muted: #a2a8d0;
-      --line: #2c3060;
-      --accent: #8f86ff;
-      --accent-ink: #12142b;
-      --err: #ff8f87;
-      --ok: #6fd9a0;
-    }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --bg: #15191c; --card: #1e2428; --ink: #edebe4; --muted: #a3a69e; --line: #30383e; --field: #272e33;
+    --accent: #1a9fd1; --accent-d: #0082b2; --accent-ink: #0b1c2a; --err: #ff9b7a; --ok: #8fd870; color-scheme: dark;
+  } }
+  :root[data-theme="dark"] {
+    --bg: #15191c; --card: #1e2428; --ink: #edebe4; --muted: #a3a69e; --line: #30383e; --field: #272e33;
+    --accent: #1a9fd1; --accent-d: #0082b2; --accent-ink: #0b1c2a; --err: #ff9b7a; --ok: #8fd870; color-scheme: dark;
   }
   * { box-sizing: border-box; }
-  html, body { height: 100%; }
+  html, body { min-height: 100%; }
   body {
     margin: 0;
-    font-family: "Bricolage Grotesque", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-family: "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
     background: var(--bg);
     color: var(--ink);
     display: grid;
     place-items: center;
-    padding: 24px;
+    padding: 24px 16px;
   }
-  main { width: 100%; max-width: 400px; }
-  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; font-weight: 800; font-size: 1.5rem; letter-spacing: -0.02em; }
-  .brand svg { width: 28px; height: 28px; }
-  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 28px; }
-  h1 { font-size: 1.6rem; line-height: 1.15; margin: 0 0 6px; letter-spacing: -0.02em; }
-  .sub { color: var(--muted); margin: 0 0 22px; font-size: 0.95rem; line-height: 1.5; }
-  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--bg); padding: 4px; border-radius: 10px; margin-bottom: 22px; }
-  .tabs button { font: inherit; font-weight: 600; border: 0; background: transparent; color: var(--muted); padding: 9px; border-radius: 7px; cursor: pointer; }
-  .tabs button[aria-selected="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 0 var(--line); }
-  label { display: block; font-size: 0.88rem; font-weight: 600; margin: 0 0 6px; }
-  input { width: 100%; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; margin-bottom: 14px; }
-  input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .primary { width: 100%; font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 12px; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+  main { width: 100%; max-width: 420px; }
+  .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .brand { display: flex; align-items: center; gap: 8px; font-family: "Baloo 2", sans-serif; font-weight: 800; font-size: 30px; color: var(--orange); text-decoration: none; }
+  .brand svg { width: 34px; height: 34px; animation: spin 6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .theme { width: 42px; height: 42px; border-radius: 12px; border: 2px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer; font-size: 18px; line-height: 1; }
+  .back { display: inline-block; margin-top: 16px; color: var(--muted); font-weight: 700; text-decoration: none; }
+  .back:hover { color: var(--accent); }
+  .card { background: var(--card); border: 2px solid var(--line); border-radius: 20px; padding: 28px; animation: rise .4s ease-out; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+  h1 { font-family: "Baloo 2", sans-serif; font-size: 1.9rem; line-height: 1.1; margin: 0 0 6px; }
+  .sub { color: var(--muted); margin: 0 0 22px; font-size: 0.95rem; line-height: 1.5; font-weight: 600; }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--field); padding: 4px; border-radius: 12px; margin-bottom: 22px; }
+  .tabs button { font: inherit; font-weight: 800; border: 0; background: transparent; color: var(--muted); padding: 9px; border-radius: 9px; cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  label { display: block; font-size: 0.9rem; font-weight: 800; margin: 0 0 6px; }
+  input { width: 100%; font: inherit; color: var(--ink); background: var(--field); border: 2px solid var(--line); border-radius: 12px; padding: 11px 12px; margin-bottom: 14px; }
+  input:focus { border-color: var(--accent); outline: none; background: var(--card); }
+  button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .primary { display: block; width: 100%; text-align: center; text-decoration: none; font: inherit; font-weight: 800; letter-spacing: .04em; border: 0; border-radius: 12px; padding: 13px; background: var(--accent); color: var(--accent-ink); cursor: pointer; box-shadow: 0 4px 0 var(--accent-d); }
   .primary:disabled { opacity: 0.6; cursor: wait; }
-  .link { background: none; border: 0; font: inherit; color: var(--accent); padding: 0; cursor: pointer; text-decoration: underline; }
+  .link { background: none; border: 0; font: inherit; font-weight: 700; color: var(--accent); padding: 0; cursor: pointer; text-decoration: underline; }
   .row { margin-top: 14px; font-size: 0.9rem; color: var(--muted); }
-  .msg { min-height: 1.3em; margin: 14px 0 0; font-size: 0.9rem; line-height: 1.4; }
+  .msg { min-height: 1.3em; margin: 14px 0 0; font-size: 0.9rem; line-height: 1.4; font-weight: 700; }
   .msg.err { color: var(--err); }
   .msg.ok { color: var(--ok); }
   .hidden { display: none !important; }
-  .who { padding: 14px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 18px; }
+  .who { padding: 14px; border: 2px solid var(--line); border-radius: 12px; margin-bottom: 18px; }
   .who strong { display: block; font-size: 1.1rem; }
   .who span { color: var(--muted); font-size: 0.9rem; word-break: break-all; }
+  .go { margin-bottom: 18px; }
   @media (prefers-reduced-motion: no-preference) {
-    .primary { transition: transform 0.12s ease; }
-    .primary:active { transform: scale(0.98); }
+    .primary { transition: transform 0.12s ease, box-shadow .12s; }
+    .primary:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--accent-d); }
   }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
 </style>
 </head>
 <body>
 <main>
-  <div class="brand">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#ffc93c" d="M12 1.5l3 6.9 7.5.7-5.7 5 1.7 7.4L12 17.5l-6.5 4 1.7-7.4-5.7-5 7.5-.7z"/></svg>
-    Starly
+  <div class="top">
+    <a class="brand" href="./" aria-label="Volver a Starly">
+      <svg viewBox="0 0 100 100" aria-hidden="true"><path d="M50 6 L62 36 L94 38 L69 58 L78 90 L50 72 L22 90 L31 58 L6 38 L38 36 Z" fill="#ebe43f" stroke="#ef8c47" stroke-width="5" stroke-linejoin="round"/></svg>
+      starly
+    </a>
+    <button class="theme" id="theme" type="button" aria-label="Cambiar tema"></button>
   </div>
 
   <section class="card" id="guest" aria-live="polite">
@@ -128,6 +133,7 @@
     <h1 id="hello">Hola</h1>
     <p class="sub">Tu sesión está activa.</p>
     <div class="who"><strong id="who-name"></strong><span id="who-email"></span></div>
+    <a class="primary go" href="./">Ir a Starly</a>
     <form id="form-profile" novalidate>
       <label for="p-name">Nombre</label>
       <input id="p-name" type="text" autocomplete="name">
@@ -136,6 +142,8 @@
     <p class="row"><button class="link" type="button" id="logout">Cerrar sesión</button></p>
     <p class="msg" id="msg-account" role="status"></p>
   </section>
+
+  <a class="back" href="./">← Volver a Starly</a>
 </main>
 
 <script>
@@ -155,6 +163,17 @@
   const say = (el, text, type) => { el.textContent = text || ''; el.className = 'msg ' + (type || ''); };
   const humanize = (e) => ERRORS[e.message] || e.message;
   const busy = (form, on) => form.querySelectorAll('button[type="submit"]').forEach(b => b.disabled = on);
+
+  // Tema claro / oscuro (compartido con la app)
+  const isDark = () => { const t = document.documentElement.dataset.theme; return t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; };
+  const paintTheme = () => { $('theme').textContent = isDark() ? '☀' : '☾'; $('theme').title = isDark() ? 'Modo claro' : 'Modo oscuro'; };
+  $('theme').onclick = () => {
+    const next = isDark() ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('starly.theme', next); } catch (e) {}
+    paintTheme();
+  };
+  paintTheme();
 
   // Tabs
   function showTab(which) {
@@ -189,7 +208,7 @@
     say($('msg'), 'Cuenta creada. Revisa tu correo y toca el enlace para confirmarla.', 'ok');
   });
 
-  // Login
+  // Login: al entrar, vuelve a la app
   $('form-login').addEventListener('submit', async (e) => {
     e.preventDefault();
     const form = e.target;
@@ -199,7 +218,9 @@
       password: $('l-pass').value
     });
     busy(form, false);
-    if (error) say($('msg'), humanize(error), 'err');
+    if (error) return say($('msg'), humanize(error), 'err');
+    say($('msg'), '¡Listo! Te llevamos a Starly…', 'ok');
+    setTimeout(() => { location.href = './'; }, 900);
   });
 
   // Recuperar contraseña
@@ -234,6 +255,8 @@
     const nombre = $('p-name').value.trim();
     const { error } = await db.from('profiles').upsert({ id: user.id, nombre });
     if (error) return say($('msg-account'), 'No se pudo guardar: ' + error.message, 'err');
+    // También en los metadatos de la sesión, para que la app muestre el nombre nuevo
+    await db.auth.updateUser({ data: { nombre } });
     $('who-name').textContent = nombre || 'Sin nombre';
     $('hello').textContent = nombre ? 'Hola, ' + nombre : 'Hola';
     say($('msg-account'), 'Cambios guardados.', 'ok');

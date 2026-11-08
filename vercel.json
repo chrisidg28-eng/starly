@@ -1,6 +1,11 @@
 {
   "outputDirectory": "public",
   "functions": {
-    "api/generar-ruta.py": { "maxDuration": 300 }
+    "api/generar-ruta.py": {
+      "maxDuration": 60
+    },
+    "api/chat.py": {
+      "maxDuration": 60
+    }
   }
 }

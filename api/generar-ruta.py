@@ -12,8 +12,13 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler
 
 # La clave se lee de la variable de entorno GEMINI_API_KEY (configúrala en Vercel).
+# Modelos rápidos en orden: si uno está saturado o tarda demasiado, se prueba el siguiente.
 API_KEY = os.environ.get("GEMINI_API_KEY", "")
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+MODELS = [m.strip() for m in os.environ.get(
+    "GEMINI_MODELS", "gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemini-flash-lite-latest,gemini-3.5-flash"
+).split(",") if m.strip()]
+PER_MODEL_TIMEOUT = 20
+TOTAL_BUDGET = 55
 
 DEFAULT_STEPS = [
     {"n": 1, "name": "Reconocer", "hint": "identifica qué de lo que ya sabes aplica aquí"},
@@ -34,69 +39,51 @@ def clean(value, max_len=60):
 
 def build_prompt(from_, to, known, steps):
     if known:
-        known_line = (
-            f"Otras disciplinas que ya aprendió en Starly: {', '.join(known)}. "
-            "Úsalas como apoyo: menciona alguna en al menos una explicación o pregunta "
-            'si de verdad ayuda, y llena "puentes" con 1 a 3 conexiones concretas.'
-        )
+        known_line = f'También sabe: {", ".join(known)}. Llena "puentes" con 1 a 3 conexiones concretas con esas disciplinas.'
     else:
-        known_line = 'No ha aprendido otras disciplinas en Starly todavía: deja "puentes" como lista vacía.'
-    steps_text = "\n".join(f"   {s['n']}. {s['name']}: {s['hint']}." for s in steps)
-    return f"""Eres el motor de "Traducción Cognitiva" de Starly, una app que enseña una disciplina nueva a partir de otra que el estudiante ya domina.
-
-Disciplina que domina: "{from_}"
-Disciplina que quiere aprender: "{to}"
+        known_line = '"puentes" debe ser [].'
+    steps_text = "; ".join(f"{s['n']}) {s['name']}: {s['hint']}" for s in steps)
+    return f"""Eres el motor de Starly: enseñas "{to}" a alguien que domina "{from_}".
 {known_line}
 
-Tareas:
-1. Extrae exactamente 4 principios clave de cada disciplina. Frases cortas de máximo 6 palabras.
-2. Conecta principios de la disciplina que domina (a) con los de la nueva (b): entre 5 y 6 enlaces. Cada enlace tiene tipo "igual" (funciona igual en ambas), "similar" (se parece, con matices) o "distinta" (parece igual pero funciona distinto; es una trampa común). Incluye al menos uno de cada tipo. Explica cada enlace en 1 o 2 frases.
-3. Escribe exactamente 6 preguntas de opción múltiple basadas en ese mapa, una por paso y en este orden:
-{steps_text}
-   Cada pregunta tiene 3 opciones cortas (máximo 14 palabras), solo una correcta, y una explicación de 1 frase.
+1. "a": 4 principios clave de {from_}; "b": 4 de {to}. Máximo 6 palabras cada uno.
+2. "enlaces": 5 conexiones a→b. "tipo": "igual", "similar" o "distinta" (parece igual pero es una trampa); al menos uno de cada tipo. "porque": 1 frase.
+3. "preguntas": 6 de opción múltiple, una por paso en este orden: {steps_text}.
+   3 opciones cortas (máx. 12 palabras), "correcta" es el índice (0-2), "porque": 1 frase.
 
-Responde solo con JSON (sin texto antes ni después, sin bloque de código) con esta forma exacta:
-{{"a":[{{"id":"a1","t":"..."}}],"b":[{{"id":"b1","t":"..."}}],"enlaces":[{{"a":"a1","b":"b1","tipo":"igual","porque":"..."}}],"preguntas":[{{"paso":1,"q":"...","opciones":["...","...","..."],"correcta":0,"porque":"..."}}],"puentes":[{{"disciplina":"...","idea":"..."}}]}}
-
-Escribe en español, tono cercano, tuteando al estudiante."""
+Solo JSON, en español, tuteando:
+{{"a":[{{"id":"a1","t":""}}],"b":[{{"id":"b1","t":""}}],"enlaces":[{{"a":"a1","b":"b1","tipo":"igual","porque":""}}],"preguntas":[{{"paso":1,"q":"","opciones":["","",""],"correcta":0,"porque":""}}],"puentes":[{{"disciplina":"","idea":""}}]}}"""
 
 
-def ask_gemini(prompt):
-    """Devuelve (texto, código_de_error)."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
-    payload = json.dumps({
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "responseMimeType": "application/json",
-            "temperature": 0.7,
-            "maxOutputTokens": 8192,
-            "thinkingConfig": {"thinkingLevel": "low"},
-        },
-    }).encode("utf-8")
-
-    for attempt in range(3):
+def call_model(model, prompt, timeout):
+    """Devuelve (texto, código). El código "retry" significa: probar el siguiente modelo."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    thinking = True
+    for _ in range(2):
+        config = {"responseMimeType": "application/json", "temperature": 0.6, "maxOutputTokens": 3000}
+        if thinking:
+            config["thinkingConfig"] = {"thinkingLevel": "minimal"}
+        payload = json.dumps({"contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                              "generationConfig": config}).encode("utf-8")
         req = urllib.request.Request(url, data=payload, method="POST", headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": API_KEY,
-        })
+            "Content-Type": "application/json", "x-goog-api-key": API_KEY})
         try:
-            with urllib.request.urlopen(req, timeout=280) as res:
+            with urllib.request.urlopen(req, timeout=timeout) as res:
                 data = json.loads(res.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "ignore")
-            print("Error de Gemini:", exc.code, detail[:500])
-            if exc.code == 503 and attempt < 2:
-                time.sleep(1.2 * (attempt + 1))
+            print(model, "error", exc.code, detail[:300])
+            if exc.code == 400 and thinking and "thinking" in detail.lower():
+                thinking = False
                 continue
             if exc.code in (401, 403) or (exc.code == 400 and "api key" in detail.lower()):
                 return None, "no_key"
-            if exc.code in (429, 503):
-                return None, "rate_limited"
+            if exc.code in (404, 429, 500, 503):
+                return None, "retry"
             return None, "upstream_error"
-        except Exception as exc:  # red caída, tiempo agotado
-            print("Error inesperado:", exc)
-            return None, "upstream_error"
-
+        except Exception as exc:  # red caída o tiempo agotado
+            print(model, "sin respuesta:", exc)
+            return None, "retry"
         cand = (data.get("candidates") or [{}])[0]
         finish = cand.get("finishReason", "")
         if finish in ("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST"):
@@ -104,8 +91,23 @@ def ask_gemini(prompt):
         parts = (cand.get("content") or {}).get("parts") or []
         text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
         if finish == "MAX_TOKENS" or not text.strip():
-            return None, "bad_json"
+            return None, "retry"
         return text, None
+    return None, "retry"
+
+
+def ask_gemini(prompt):
+    """Prueba los modelos en orden hasta que uno responda. Devuelve (texto, código_de_error)."""
+    start = time.time()
+    for model in MODELS:
+        left = TOTAL_BUDGET - (time.time() - start)
+        if left < 4:
+            break
+        text, err = call_model(model, prompt, min(PER_MODEL_TIMEOUT, left))
+        if text:
+            return text, None
+        if err != "retry":
+            return None, err
     return None, "rate_limited"
 
 
@@ -136,7 +138,7 @@ class handler(BaseHTTPRequestHandler):
             return self._send(400, json.dumps({"code": "bad_request"}), "application/json")
 
         known = body.get("known") if isinstance(body.get("known"), list) else []
-        known = [k for k in (clean(x) for x in known[:12]) if k]
+        known = [k for k in (clean(x) for x in known[:8]) if k]
 
         steps = body.get("steps")
         if isinstance(steps, list) and len(steps) == 6 and all(isinstance(s, dict) for s in steps):

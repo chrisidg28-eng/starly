@@ -4,7 +4,11 @@
 // Mientras Gemini piensa, envía espacios para que Netlify no corte la conexión.
 
 // La clave se lee de la variable de entorno GEMINI_API_KEY (configúrala en Netlify).
-const DEFAULT_MODEL = "gemini-3.8-flash";
+// Modelos rápidos en orden: si uno está saturado (503/429) o tarda demasiado, se prueba el siguiente.
+// Se puede cambiar con la variable GEMINI_MODELS="modelo1,modelo2".
+const DEFAULT_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash"];
+const PER_MODEL_TIMEOUT_MS = 20000;   // tiempo máximo por intento
+const TOTAL_BUDGET_MS = 55000;        // tiempo máximo total antes de rendirse
 
 const DEFAULT_STEPS = [
   { n: 1, name: "Reconocer", hint: "identifica qué de lo que ya sabes aplica aquí" },
@@ -17,62 +21,47 @@ const DEFAULT_STEPS = [
 
 const clean = (s, max = 60) => String(s ?? "").replace(/[\r\n"]+/g, " ").trim().slice(0, max);
 
+// Prompt corto: menos texto de entrada y salida = respuesta más rápida.
 function buildPrompt(from, to, known, steps) {
-  return `Eres el motor de "Traducción Cognitiva" de Starly, una app que enseña una disciplina nueva a partir de otra que el estudiante ya domina.
-
-Disciplina que domina: "${from}"
-Disciplina que quiere aprender: "${to}"
+  return `Eres el motor de Starly: enseñas "${to}" a alguien que domina "${from}".
 ${known.length
-    ? `Otras disciplinas que ya aprendió en Starly: ${known.join(", ")}. Úsalas como apoyo: menciona alguna en al menos una explicación o pregunta si de verdad ayuda, y llena "puentes" con 1 a 3 conexiones concretas.`
-    : `No ha aprendido otras disciplinas en Starly todavía: deja "puentes" como lista vacía.`}
+    ? `También sabe: ${known.join(", ")}. Llena "puentes" con 1 a 3 conexiones concretas con esas disciplinas.`
+    : `"puentes" debe ser [].`}
 
-Tareas:
-1. Extrae exactamente 4 principios clave de cada disciplina. Frases cortas de máximo 6 palabras.
-2. Conecta principios de la disciplina que domina (a) con los de la nueva (b): entre 5 y 6 enlaces. Cada enlace tiene tipo "igual" (funciona igual en ambas), "similar" (se parece, con matices) o "distinta" (parece igual pero funciona distinto; es una trampa común). Incluye al menos uno de cada tipo. Explica cada enlace en 1 o 2 frases.
-3. Escribe exactamente 6 preguntas de opción múltiple basadas en ese mapa, una por paso y en este orden:
-${steps.map((s) => `   ${s.n}. ${s.name}: ${s.hint}.`).join("\n")}
-   Cada pregunta tiene 3 opciones cortas (máximo 14 palabras), solo una correcta, y una explicación de 1 frase.
+1. "a": 4 principios clave de ${from}; "b": 4 de ${to}. Máximo 6 palabras cada uno.
+2. "enlaces": 5 conexiones a→b. "tipo": "igual", "similar" o "distinta" (parece igual pero es una trampa); al menos uno de cada tipo. "porque": 1 frase.
+3. "preguntas": 6 de opción múltiple, una por paso en este orden: ${steps.map((s) => `${s.n}) ${s.name}: ${s.hint}`).join("; ")}.
+   3 opciones cortas (máx. 12 palabras), "correcta" es el índice (0-2), "porque": 1 frase.
 
-Responde solo con JSON (sin texto antes ni después, sin bloque de código) con esta forma exacta:
-{"a":[{"id":"a1","t":"..."}],"b":[{"id":"b1","t":"..."}],"enlaces":[{"a":"a1","b":"b1","tipo":"igual","porque":"..."}],"preguntas":[{"paso":1,"q":"...","opciones":["...","...","..."],"correcta":0,"porque":"..."}],"puentes":[{"disciplina":"...","idea":"..."}]}
-
-Escribe en español, tono cercano, tuteando al estudiante.`;
+Solo JSON, en español, tuteando:
+{"a":[{"id":"a1","t":""}],"b":[{"id":"b1","t":""}],"enlaces":[{"a":"a1","b":"b1","tipo":"igual","porque":""}],"preguntas":[{"paso":1,"q":"","opciones":["","",""],"correcta":0,"porque":""}],"puentes":[{"disciplina":"","idea":""}]}`;
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function askGemini(apiKey, model, prompt, thinking) {
+async function callModel(apiKey, model, prompt, timeoutMs) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-  // "minimal" es el nivel de razonamiento más rápido; si el modelo no lo acepta, se usa "low".
-  let level = thinking || "minimal";
-  const payload = () => JSON.stringify({
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: {
-      responseMimeType: "application/json",
-      temperature: 0.7,
-      maxOutputTokens: 8192,
-      thinkingConfig: { thinkingLevel: level },
-    },
-  });
-  for (let attempt = 0; attempt < 3; attempt++) {
+  let thinking = true;
+  for (let tries = 0; tries < 2; tries++) {
+    const generationConfig = { responseMimeType: "application/json", temperature: 0.6, maxOutputTokens: 3000 };
+    if (thinking) generationConfig.thinkingConfig = { thinkingLevel: "minimal" };
     let res;
     try {
       res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-        body: payload(),
+        body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig }),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
-      console.error("Error de red:", e);
-      return { err: "upstream_error" };
+      console.error(model, "sin respuesta:", e?.name || e);
+      return { err: "retry" };
     }
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
-      console.error("Error de Gemini:", res.status, detail.slice(0, 500));
-      if (res.status === 400 && level !== "low" && /thinking/i.test(detail)) { level = "low"; attempt--; continue; }
-      if (res.status === 503 && attempt < 2) { await sleep(1200 * (attempt + 1)); continue; }
+      console.error(model, "error", res.status, detail.slice(0, 300));
+      // El modelo no acepta "minimal": se repite sin configuración de razonamiento.
+      if (res.status === 400 && thinking && /thinking/i.test(detail)) { thinking = false; continue; }
       if (res.status === 401 || res.status === 403 || (res.status === 400 && /api key/i.test(detail))) return { err: "no_key" };
-      if (res.status === 429 || res.status === 503) return { err: "rate_limited" };
+      if (res.status === 429 || res.status === 503 || res.status === 500 || res.status === 404) return { err: "retry" };
       return { err: "upstream_error" };
     }
     const data = await res.json().catch(() => ({}));
@@ -80,10 +69,24 @@ async function askGemini(apiKey, model, prompt, thinking) {
     const finish = cand.finishReason || "";
     if (["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST"].includes(finish)) return { err: "refused" };
     const text = (cand.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
-    if (finish === "MAX_TOKENS" || !text.trim()) return { err: "bad_json" };
+    if (finish === "MAX_TOKENS" || !text.trim()) return { err: "retry" };
     return { text };
   }
-  return { err: "rate_limited" };
+  return { err: "retry" };
+}
+
+async function askGemini(apiKey, models, prompt) {
+  const start = Date.now();
+  let last = "rate_limited";
+  for (const model of models) {
+    const left = TOTAL_BUDGET_MS - (Date.now() - start);
+    if (left < 4000) break;
+    const r = await callModel(apiKey, model, prompt, Math.min(PER_MODEL_TIMEOUT_MS, left));
+    if (r.text) return r;
+    if (r.err !== "retry") return r;   // clave mala o contenido rechazado: no tiene caso seguir
+    last = "rate_limited";
+  }
+  return { err: last };
 }
 
 const jsonError = (code, status) =>
@@ -93,15 +96,14 @@ export default async (request) => {
   if (request.method !== "POST") return jsonError("method_not_allowed", 405);
 
   const apiKey = Netlify.env.get("GEMINI_API_KEY");
-  const model = Netlify.env.get("GEMINI_MODEL") || DEFAULT_MODEL;
-  const thinking = Netlify.env.get("GEMINI_THINKING") || "minimal";
+  const models = (Netlify.env.get("GEMINI_MODELS") || "").split(",").map((m) => m.trim()).filter(Boolean);
   if (!apiKey) return jsonError("no_key", 500);
 
   let body;
   try { body = await request.json(); } catch { return jsonError("bad_request", 400); }
   const from = clean(body.from), to = clean(body.to);
   if (!from || !to) return jsonError("bad_request", 400);
-  const known = Array.isArray(body.known) ? body.known.slice(0, 12).map((k) => clean(k)).filter(Boolean) : [];
+  const known = Array.isArray(body.known) ? body.known.slice(0, 8).map((k) => clean(k)).filter(Boolean) : [];
   const steps = Array.isArray(body.steps) && body.steps.length === 6
     ? body.steps.map((s, i) => ({ n: i + 1, name: clean(s?.name, 40), hint: clean(s?.hint, 120) }))
     : DEFAULT_STEPS;
@@ -111,9 +113,9 @@ export default async (request) => {
     async start(controller) {
       const send = (t) => controller.enqueue(enc.encode(t));
       send(" ");
-      const beat = setInterval(() => send(" "), 8000);
+      const beat = setInterval(() => send(" "), 5000);
       try {
-        const { text, err } = await askGemini(apiKey, model, buildPrompt(from, to, known, steps), thinking);
+        const { text, err } = await askGemini(apiKey, models.length ? models : DEFAULT_MODELS, buildPrompt(from, to, known, steps));
         send(text ? text : "\n@@ERROR:" + err);
       } finally {
         clearInterval(beat);
