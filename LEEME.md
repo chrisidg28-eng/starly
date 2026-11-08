@@ -34,3 +34,10 @@ Súbela de una de estas dos formas:
   (Netlify: **Site configuration → Environment variables**). Nunca la escribas en el código.
 - Para cambiarla en Netlify: `netlify env:set GEMINI_API_KEY nueva-clave` y vuelve a desplegar.
 - Cualquiera que use tu app gasta de tu cuota de Gemini.
+
+## Liga de amigos (Supabase)
+
+Para que funcione la pestaña **Amigos** de la Liga hay que correr una sola vez el archivo
+`supabase/amigos.sql`: en Supabase → **SQL Editor** → **New query** → pega todo el archivo → **Run**.
+Crea la tabla `friendships`, agrega columnas de XP a `profiles` y los permisos (cada estudiante
+solo ve su perfil y el de sus amigos). Se puede volver a correr sin problema.

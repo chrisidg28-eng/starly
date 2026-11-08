@@ -181,6 +181,7 @@ function addXp(n, route){
     S.known[route.to] = (S.known[route.to]||0) + n;
   }
   save();
+  syncSoon();   // la liga de amigos ve tu XP nueva
 }
 
 /* ================= navigation ================= */
@@ -230,6 +231,43 @@ function league(){
   return rows;
 }
 const myRank = () => league().findIndex(r=>r.me)+1;
+// La liga solo muestra el top 5: fuera de ahí no se dice el puesto, solo cuánto falta para entrar.
+const TOP_N = 5;
+function leagueStatus(){
+  const rows=league(), i=rows.findIndex(r=>r.me);
+  if(i<TOP_N) return {inTop:true, rank:i+1, gap:0, rows};
+  return {inTop:false, rank:0, gap:rows[TOP_N-1].xp - S.weekXp + 1, rows};
+}
+const rankShort = () => { const st=leagueStatus(); return st.inTop ? "#"+st.rank : "Top 5"; };
+const rankSentence = () => { const st=leagueStatus();
+  return st.inTop ? `Vas en el puesto <b>#${st.rank}</b> de la ${LEAGUE_NAME} con ${S.weekXp} XP esta semana.`
+    : `Te faltan <b>${st.gap} XP</b> para entrar al top 5 de la ${LEAGUE_NAME}. ¡Tú puedes!`; };
+
+/* Liga de amigos: se sincroniza con Supabase cuando hay sesión */
+let leagueTab = "global";
+let friends = {status:"idle", list:[], code:"", msg:"", me:""};
+let syncTimer = null;
+function syncSoon(){
+  const u=currentUser(); if(!u || !window.Amigos) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(async ()=>{
+    const r = await Amigos.sync({nombre:u.name, xp:S.xp, weekXp:S.weekXp, week:S.week, level:S.level});
+    if(r.ok) friends.code = r.code;
+    else if(r.err==="setup") friends.status = "setup";
+  }, 800);
+}
+async function loadFriends(){
+  if(!currentUser()){ friends={...friends, status:"guest"}; render(); return; }
+  friends.status="loading"; if(view==="liga") render();
+  const u=currentUser();
+  const s = await Amigos.sync({nombre:u.name, xp:S.xp, weekXp:S.weekXp, week:S.week, level:S.level});
+  if(s.err){ friends.status = s.err==="setup" ? "setup" : "error"; if(view==="liga") render(); return; }
+  friends.code = s.code;
+  const l = await Amigos.list();
+  if(l.err){ friends.status = l.err==="setup" ? "setup" : "error"; if(view==="liga") render(); return; }
+  friends = {...friends, status:"ready", list:l.friends, me:l.me};
+  if(view==="liga") render();
+}
 
 /* ================= side panel ================= */
 function renderPanel(){
@@ -248,7 +286,7 @@ function renderPanel(){
     <div class="statrow card" style="padding:12px">
       <div class="stat" title="Racha de días">${icon("i-fire")}${S.streak}</div>
       <div class="stat" title="XP total">${icon("i-xp")}${S.xp}</div>
-      <div class="stat" title="Puesto en la liga">${icon("i-cup")}#${myRank()}</div>
+      <div class="stat" title="Liga">${icon("i-cup")}${rankShort()}</div>
     </div>
     <div class="card">
       <div class="eyebrow">Meta diaria</div>
@@ -257,7 +295,7 @@ function renderPanel(){
     </div>
     <div class="card">
       <div class="eyebrow">${LEAGUE_NAME}</div>
-      <p style="margin:6px 0 10px;font-weight:700">Vas en el puesto <b>#${myRank()}</b> con ${S.weekXp} XP esta semana.</p>
+      <p style="margin:6px 0 10px;font-weight:700">${rankSentence()}</p>
       <button class="btn ghost block" data-go="liga">Ver liga</button>
     </div>
     <div class="card">
@@ -269,7 +307,7 @@ function renderPanel(){
 function topStats(){
   return `<div class="topstats card" style="justify-content:space-around;padding:10px">
     <div class="stat">${icon("i-fire")}${S.streak}</div><div class="stat">${icon("i-xp")}${S.xp}</div>
-    <div class="stat">${icon("i-cup")}#${myRank()}</div><div class="stat"><span class="muted">Hoy</span>${S.dayXp}/${S.goal||50}</div>
+    <div class="stat">${icon("i-cup")}${rankShort()}</div><div class="stat"><span class="muted">Hoy</span>${S.dayXp}/${S.goal||50}</div>
     <button class="stat lv-chip" data-go="bienvenida" title="Tu nivel"><span class="muted">Nv</span>${S.level||"?"}</button></div>`;
 }
 function greet(text){
@@ -714,7 +752,7 @@ function viewResult(r){
       <h1 class="page-title pop-in">${title}</h1>
       <p class="muted" style="margin:0;font-weight:700">${esc(r.from)} → ${esc(r.to)} · ${sub}</p>
       <div class="big"><div class="box ${game.won?"":"zero"}"><b>XP ganada</b><span class="countup" data-to="${game.earned}">${game.earned}</span></div><div class="box g"><b>A la primera</b><span>${game.first}/${game.total}</span></div></div>
-      <p style="margin:0;font-weight:700">Vas en el puesto <b>#${myRank()}</b> de la ${LEAGUE_NAME}.</p>
+      <p style="margin:0;font-weight:700">${rankSentence()}</p>
       <div class="diag-cta rise">
         <span class="diag-cta-art">${sym("s-chicken",VB["s-chicken"])}</span>
         <div style="min-width:0;text-align:left"><b>Diagnóstico rápido</b><p>Ayuda al pollo a cruzar la calle. Con tus respuestas ajusto la dificultad de tus actividades.</p></div>
@@ -1054,37 +1092,93 @@ function viewNet(){
 }
 
 /* ---------- Liga ---------- */
+const initials = name => String(name||"?").trim().split(/\s+/).map(w=>w[0]).slice(0,2).join("").toUpperCase() || "?";
+const FRIEND_COLORS = ["#5b6cff","#0082b2","#c4672a","#7a5af8","#2e8b57","#d9488f","#3a7f8f","#b85f24"];
+
 function viewLeague(){
-  const rows=league(); const n=rows.length;
   const now=new Date(); const end=new Date(now); end.setDate(now.getDate()+(7-((now.getDay()+6)%7))); end.setHours(0,0,0,0);
   const ms=end-now, dLeft=Math.floor(ms/864e5), hLeft=Math.floor(ms%864e5/36e5);
-  const top=rows[0].xp||1, me=rows.findIndex(r=>r.me);
-  const ini = name => name.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase();
+  return `${topStats()}
+    <div class="lg-head">
+      <div><div class="lg-kicker">${leagueTab==="global"?LEAGUE_DIVISION:"Solo tú y tus amigos"}</div><h1 class="page-title">${leagueTab==="global"?LEAGUE_NAME:"Liga de amigos"}</h1></div>
+      <div class="lg-timer" title="La liga termina el domingo a medianoche"><span>Termina en</span><b>${dLeft} d ${hLeft} h</b></div>
+    </div>
+    <div class="lg-tabs" role="tablist">
+      <button role="tab" data-lgtab="global" aria-selected="${leagueTab==="global"}">${icon("i-cup")}Top 5</button>
+      <button role="tab" data-lgtab="amigos" aria-selected="${leagueTab==="amigos"}">${icon("i-net")}Amigos</button>
+    </div>
+    ${leagueTab==="global" ? viewLeagueGlobal() : viewLeagueFriends()}
+    <button class="btn blue block" data-go="juegos">Jugar y sumar XP</button>`;
+}
+
+function viewLeagueGlobal(){
+  const st=leagueStatus(), rows=st.rows.slice(0,TOP_N);
+  const top=rows[0].xp||1;
   const first = r => r.me ? "Tú" : r.name.split(" ")[0];
   const medal=["gold","silver","bronze"];
   const podium=[1,0,2].map(i=>{ const r=rows[i]; if(!r) return ""; return `<div class="pod p${i+1} ${r.me?"me":""}" style="animation-delay:${[.15,0,.3][i]}s">
-      <span class="pod-av ${medal[i]}" style="--av:${r.color}">${esc(r.me?"Tú":ini(r.name))}<i>${i+1}</i></span>
+      <span class="pod-av ${medal[i]}" style="--av:${r.color}">${esc(r.me?"Tú":initials(r.name))}<i>${i+1}</i></span>
       <b>${esc(first(r))}</b><small>${r.xp} XP</small><div class="pod-base ${medal[i]}"></div></div>`; }).join("");
-  const gap = me>0 ? rows[me-1].xp-rows[me].xp+1 : 0;
-  return `${topStats()}
-    <div class="lg-head">
-      <div><div class="lg-kicker">${LEAGUE_DIVISION}</div><h1 class="page-title">${LEAGUE_NAME}</h1></div>
-      <div class="lg-timer" title="La liga termina el domingo a medianoche"><span>Termina en</span><b>${dLeft} d ${hLeft} h</b></div>
-    </div>
-    <div class="lg-me card">
-      <div class="lg-me-rank"><span class="lg-me-pos">#${me+1}</span><span class="muted">de ${n}</span></div>
-      <p>${me===0 ? "Vas en primer lugar. ¡Defiende tu puesto!" : `Te faltan <b>${gap} XP</b> para superar a ${esc(first(rows[me-1]))}.`}</p>
-    </div>
+  const meCard = st.inTop
+    ? `<div class="lg-me card"><div class="lg-me-rank"><span class="lg-me-pos">#${st.rank}</span><span class="muted">top 5</span></div>
+        <p>${st.rank===1 ? "Vas en primer lugar. ¡Defiende tu puesto!" : `¡Estás en el top 5! Te faltan <b>${st.rows[st.rank-2].xp-S.weekXp+1} XP</b> para subir un lugar.`}</p></div>`
+    : `<div class="lg-me card out"><div class="lg-me-rank"><span class="lg-me-pos">${S.weekXp}</span><span class="muted">tu XP</span></div>
+        <p>Te faltan <b>${st.gap} XP</b> para entrar al top 5. Cada actividad cuenta: ¡juega una y acércate!</p></div>`;
+  return `${meCard}
     <div class="podium">${podium}</div>
     <div class="card lg-table">
-      <ol class="lg-rows">${rows.map((r,i)=>{
-        const zone = i===3?`<li class="lg-zone up" aria-hidden="true"><span>Los 3 primeros ascienden</span></li>`: i===n-2?`<li class="lg-zone down" aria-hidden="true"><span>Zona de descenso</span></li>`:"";
-        return `${zone}<li class="lg-row ${r.me?"me":""} ${i<3?"top":""} ${i>=n-2?"low":""}" style="animation-delay:${i*.04}s">
-          <span class="lg-pos">${i+1}</span><span class="lg-av" style="--av:${r.color}">${esc(r.me?"Tú":ini(r.name))}</span>
+      <ol class="lg-rows">${rows.map((r,i)=>`${i===3?`<li class="lg-zone up" aria-hidden="true"><span>Los 3 primeros ascienden</span></li>`:""}
+        <li class="lg-row ${r.me?"me":""} ${i<3?"top":""}" style="animation-delay:${i*.05}s">
+          <span class="lg-pos">${i+1}</span><span class="lg-av" style="--av:${r.color}">${esc(r.me?"Tú":initials(r.name))}</span>
           <span class="lg-name">${esc(r.me?"Tú":r.name)}<span class="lg-bar"><i style="width:${Math.max(2,Math.round(r.xp/top*100))}%"></i></span></span>
-          <span class="lg-xp">${r.xp}<small> XP</small></span></li>`;
-      }).join("")}</ol></div>
-    <button class="btn blue block" data-go="juegos">Jugar y sumar XP</button>`;
+          <span class="lg-xp">${r.xp}<small> XP</small></span></li>`).join("")}</ol>
+      <p class="lg-foot muted">Solo mostramos los 5 primeros lugares.</p></div>`;
+}
+
+function viewLeagueFriends(){
+  const f=friends;
+  if(!currentUser()) return `<div class="card fr-empty"><span class="fr-art">${icon("i-net")}</span><b>Compite con tus amigos</b>
+    <p class="muted">Inicia sesión para agregar amigos con su código y comparar su XP de la semana.</p><a class="btn blue" href="auth.html">Iniciar sesión</a></div>`;
+  if(f.status==="idle" || f.status==="loading") return `<div class="card thinking"><svg class="starly" viewBox="0 0 100 100" aria-hidden="true"><use href="#star"/></svg><div style="flex:1"><b>Buscando a tus amigos…</b><div class="load-bar"><i></i></div></div></div>`;
+  if(f.status==="setup") return `<div class="card fr-empty"><span class="fr-art">${icon("i-net")}</span><b>La liga de amigos aún no está activada</b>
+    <p class="muted">Quien administra Starly tiene que correr una vez el archivo <code>supabase/amigos.sql</code> en Supabase.</p></div>`;
+  if(f.status==="error") return `<div class="card fr-empty"><b>No pude cargar a tus amigos</b><p class="muted">Revisa tu conexión e inténtalo otra vez.</p><button class="btn ghost" data-lgtab="amigos">Reintentar</button></div>`;
+  const u=currentUser();
+  const rows=[{id:f.me, name:u.name, xp:S.weekXp, me:true, color:"var(--blue)"},
+    ...f.list.map((p,i)=>({id:p.id, name:p.nombre||"Amigo", xp:p.week_key===S.week ? (p.week_xp||0) : 0, level:p.level, color:FRIEND_COLORS[i%FRIEND_COLORS.length]}))]
+    .sort((a,b)=>b.xp-a.xp || (a.me?-1:1));
+  const top=Math.max(1, rows[0].xp);
+  return `<div class="card fr-code">
+      <div><div class="eyebrow">Tu código de amigo</div><b class="code">${esc(f.code||"…")}</b><p class="muted">Compártelo para que te agreguen.</p></div>
+      <button class="btn ghost" id="copyCode">Copiar</button>
+    </div>
+    <form class="card fr-add" id="addFriend">
+      <label for="friendCode"><b>Agregar a un amigo</b></label>
+      <div class="fr-add-row"><input class="input" id="friendCode" maxlength="8" placeholder="Ej.: 3F9A1C2B" autocomplete="off" spellcheck="false">
+      <button class="btn" type="submit" ${f.adding?"disabled":""}>${f.adding?"Agregando…":"Agregar"}</button></div>
+      ${f.msg?`<p class="fr-msg ${f.msgOk?"ok":"bad"}">${esc(f.msg)}</p>`:""}
+    </form>
+    ${f.list.length ? `<div class="card lg-table"><ol class="lg-rows">${rows.map((r,i)=>`
+        <li class="lg-row fr ${r.me?"me":""}" style="animation-delay:${i*.05}s">
+          <span class="lg-pos">${i+1}</span><span class="lg-av" style="--av:${r.color}">${esc(r.me?"Tú":initials(r.name))}</span>
+          <span class="lg-name">${esc(r.me?"Tú":r.name)}${r.level?`<small class="muted">Nivel ${LEVEL_NAMES[r.level]||r.level}</small>`:""}<span class="lg-bar"><i style="width:${Math.max(2,Math.round(r.xp/top*100))}%"></i></span></span>
+          <span class="lg-xp">${r.xp}<small> XP</small></span>
+          ${r.me?`<span></span>`:`<button class="fr-x" data-unfriend="${esc(r.id)}" aria-label="Quitar a ${esc(r.name)}" title="Quitar amigo">✕</button>`}</li>`).join("")}</ol>
+        <p class="lg-foot muted">XP de esta semana. Se actualiza cada vez que alguien juega.</p></div>`
+      : `<div class="card fr-empty"><span class="fr-art">${icon("i-net")}</span><b>Todavía no tienes amigos en tu liga</b><p class="muted">Pídele su código a un compañero que ya tenga cuenta en Starly y agrégalo arriba.</p></div>`}`;
+}
+
+async function addFriendCode(code){
+  code=String(code||"").trim().toUpperCase();
+  if(!/^[0-9A-F]{8}$/.test(code)){ friends={...friends, msg:"El código tiene 8 caracteres (números y letras de la A a la F).", msgOk:false}; render(); return; }
+  if(code===friends.code){ friends={...friends, msg:"Ese es tu propio código. Pídele el suyo a tu amigo.", msgOk:false}; render(); return; }
+  friends={...friends, adding:true, msg:""}; render();
+  const r=await Amigos.add(code);
+  friends.adding=false;
+  if(r.ok){ friends.msg=`¡Listo! ${r.nombre} ya está en tu liga.`; friends.msgOk=true; await loadFriends(); return; }
+  friends.msg = r.err==="not_found" ? "No encontré a nadie con ese código. Revisa que esté bien escrito."
+    : r.err==="self" ? "Ese es tu propio código. Pídele el suyo a tu amigo." : r.err==="setup" ? "La liga de amigos aún no está activada." : "No se pudo agregar. Inténtalo otra vez.";
+  friends.msgOk=false; render();
 }
 
 /* ================= events ================= */
@@ -1141,6 +1235,14 @@ document.addEventListener("click", e=>{
   if(t.closest("#dnext")){ nextDiag(); return; }
   if(t.closest("#diagQuit")){ diag=null; go("juegos"); return; }
   if((b=t.closest("[data-regen]"))){ regenerateRoute(b.dataset.regen); return; }
+  if((b=t.closest("[data-lgtab]"))){ leagueTab=b.dataset.lgtab; friends.msg=""; if(leagueTab==="amigos" && friends.status!=="loading") loadFriends(); else render(); return; }
+  if(t.closest("#copyCode")){ const c=friends.code; if(c && navigator.clipboard) navigator.clipboard.writeText(c).then(()=>toast("Código copiado: "+c), ()=>toast("Tu código: "+c)); else if(c) toast("Tu código: "+c); return; }
+  if((b=t.closest("[data-unfriend]"))){
+    const row=friends.list.find(p=>p.id===b.dataset.unfriend);
+    if(!confirm(`¿Quitar a ${row && row.nombre || "este amigo"} de tu liga?`)) return;
+    Amigos.remove(b.dataset.unfriend).then(r=>{ if(r.ok){ toast("Amigo quitado"); loadFriends(); } else toast("No se pudo quitar. Inténtalo otra vez."); });
+    return;
+  }
   if((b=t.closest("[data-pickgame]"))){ pendingMode=b.dataset.pickgame; game=null; go("jugar"); return; }
   if((b=t.closest("[data-pair]"))){ const [a,c]=b.dataset.pair.split("|"); $("#fFrom").value=a; $("#fTo").value=c; ideas.from=a; ideas.to=c; return; }
   if((b=t.closest("[data-open]"))){ ideas={...ideas, routeId:b.dataset.open, sel:-1, error:""}; go("ideas"); render(); return; }
@@ -1153,6 +1255,11 @@ document.addEventListener("click", e=>{
   if(t.closest("#backIdeas")){ ideas={...ideas, routeId:null, sel:-1}; render(); return; }
   if(t.closest("#stopGen")){ ideas.ctl && ideas.ctl.abort(); return; }
 });
+document.addEventListener("submit", e=>{
+  if(e.target.id==="addFriend"){ e.preventDefault(); addFriendCode($("#friendCode").value); }
+});
+// al abrir la app con sesión, se sube la XP para que los amigos la vean
+if(currentUser()) syncSoon();
 document.addEventListener("keydown", e=>{
   if(e.target.matches("input,textarea")) return;
   if(view==="pollo" && diag && diag.status==="play"){
