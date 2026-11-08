@@ -76,8 +76,53 @@ const GAMES = {
   castle: {name:"Defiende el castillo", ico:"castle", color:"orange", lives:3, retry:true,
            desc:"Responde bien para derribar a los invasores antes de que rompan la muralla."},
   astro:  {name:"Regreso a la Tierra", ico:"rocket", color:"blue", lives:3, retry:true,
-           desc:"Cada acierto destruye un asteroide y acerca al astronauta a casa."}
+           desc:"Cada acierto destruye un asteroide y acerca al astronauta a casa."},
+  ninja:  {name:"Ninja contra el kaiju", ico:"s-ninja", color:"blue", lives:3, retry:true, isNew:true,
+           desc:"Cada respuesta correcta le quita vida al kaiju. Acierta todas para derrotarlo."},
+  samurai:{name:"El samurái y los demonios", ico:"s-samurai", color:"orange", lives:3, retry:true, isNew:true,
+           desc:"Cada acierto vence a un demonio. Cada demonio es distinto y más grande que el anterior."}
 };
+
+/* ================= nivel del estudiante ================= */
+const LEVEL_NAMES = ["", "Inicial", "Básico", "Intermedio", "Avanzado", "Experto"];
+const LEVEL_INFO = [
+  "",
+  "Preguntas directas, lenguaje sencillo y ejemplos de la vida diaria.",
+  "Preguntas de comprensión con opciones fáciles de distinguir.",
+  "Preguntas para aplicar lo que sabes, con opciones que se parecen.",
+  "Casos nuevos y análisis, con opciones engañosas.",
+  "Retos de razonamiento con matices y excepciones."
+];
+const EXAMPLE_LEVEL = 2;              // la ruta de ejemplo está escrita a nivel básico
+const lvl = () => S.level || 2;       // sin diagnóstico se asume nivel básico
+// Vidas según el nivel: más ayuda al principio, más reto al final.
+const livesFor = cfg => cfg.lives ? Math.max(1, cfg.lives + (lvl()<=1 ? 1 : lvl()>=4 ? -1 : 0)) : 0;
+const levelPips = l => `<span class="pips" aria-label="Nivel ${l} de 5">${[1,2,3,4,5].map(i=>`<i class="${i<=l?"on":""}"></i>`).join("")}</span>`;
+
+/* Diagnóstico inicial (al iniciar sesión) */
+const ONB = [
+  {id:"etapa",   q:"¿En qué etapa de estudios estás?", say:"Así sé desde dónde empezar.",
+   opts:[["Primaria",1],["Secundaria",2],["Preparatoria",3],["Universidad",3],["Ya trabajo o aprendo por mi cuenta",3]]},
+  {id:"actitud", q:"Cuando aprendes algo nuevo, ¿qué te describe mejor?", say:"No hay respuesta mala, ¡solo quiero conocerte!",
+   opts:[["Prefiero ir paso a paso, sin prisa",-1],["Voy bien si tengo ejemplos",0],["Me encantan los retos difíciles",1]]},
+  {id:"tiempo",  q:"¿Cuánto tiempo al día quieres aprender conmigo?", say:"Con esto pongo tu meta diaria.",
+   opts:[["5 minutos",30],["15 minutos",50],["30 minutos o más",80]]},
+  {id:"r1", quiz:true, q:"Calentamiento: si 3 cuadernos cuestan $60, ¿cuánto cuestan 5?", say:"Ahora unos mini retos. ¡Tranqui, no cuentan para nada!",
+   opts:[["$80",0],["$100",1],["$120",0]]},
+  {id:"r2", quiz:true, q:"Raíz es a árbol como cimiento es a…", say:"Piensa en para qué sirve cada cosa.",
+   opts:[["Ladrillo",0],["Casa",1],["Tierra",0]]},
+  {id:"r3", quiz:true, q:"¿Qué número sigue? 2, 6, 18, 54, …", say:"Busca el patrón.",
+   opts:[["108",0],["72",0],["162",1]]},
+  {id:"r4", quiz:true, q:"Todos los zirps son blums y ningún blum es verde. Entonces…", say:"El último, ¡y es de lógica pura!",
+   opts:[["Algunos zirps son verdes",0],["Ningún zirp es verde",1],["No se puede saber",0]]}
+];
+let onb = {step:0, answers:{}, picked:-1};
+
+/* Diagnóstico después de cada actividad: el pollo cruza la calle */
+const DIAG_STEPS = 5;       // pasos para cruzar
+const DIAG_MAX_MISSES = 3;  // sustos permitidos antes de regresar a la banqueta
+let diag = null;
+const diagCache = {};       // preguntas pedidas por adelantado, por ruta
 
 const TIPS = [
   "Separando los principios de cada disciplina…",
@@ -93,7 +138,8 @@ const CLIENT_TIMEOUT_MS = 70000;  // si el servidor no responde en este tiempo, 
 const LS_KEY = "starly.v1";
 const todayKey = () => { const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
 function weekKey(d=new Date()){ const t=new Date(d.getFullYear(),d.getMonth(),d.getDate()); const day=(t.getDay()+6)%7; t.setDate(t.getDate()-day); return t.getFullYear()+"-"+(t.getMonth()+1)+"-"+t.getDate(); }
-function blank(){ return {xp:0, weekXp:0, week:weekKey(), dayXp:0, day:todayKey(), streak:0, lastPlay:"", routes:[], known:{}, active:"ejemplo"}; }
+function blank(){ return {xp:0, weekXp:0, week:weekKey(), dayXp:0, day:todayKey(), streak:0, lastPlay:"", routes:[], known:{}, active:"ejemplo",
+  level:0, diag:null, goal:50, exOverride:null, levelLog:[]}; }
 let S = blank();
 try{ const raw=localStorage.getItem(LS_KEY); if(raw) S=Object.assign(blank(), JSON.parse(raw)); }catch(e){}
 function rollDates(){ if(S.week!==weekKey()){S.week=weekKey();S.weekXp=0;} if(S.day!==todayKey()){S.day=todayKey();S.dayXp=0;} }
@@ -112,9 +158,12 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const icon = (id,cls="") => `<svg class="${cls}" aria-hidden="true"><use href="#${id}"/></svg>`;
 const sym = (id,vb="0 0 100 100") => `<svg viewBox="${vb}" aria-hidden="true"><use href="#${id}"/></svg>`;
-const VB = {castle:"0 0 120 120", rocket:"0 0 120 80"};
-const allRoutes = () => [...S.routes].sort((a,b)=>b.created-a.created).concat([EXAMPLE]);
-const routeById = id => S.routes.find(r=>r.id===id) || EXAMPLE;
+const VB = {castle:"0 0 120 120", rocket:"0 0 120 80", "s-kaiju":"0 0 120 120", "s-chicken":"0 0 60 60"};
+// La ruta de ejemplo también se ajusta al nivel: si la IA la regeneró, se usa esa versión.
+const exampleRoute = () => S.exOverride ? {...EXAMPLE, ...S.exOverride} : EXAMPLE;
+const routeLevel = r => r.level || (r.example ? EXAMPLE_LEVEL : 3);
+const allRoutes = () => [...S.routes].sort((a,b)=>b.created-a.created).concat([exampleRoute()]);
+const routeById = id => S.routes.find(r=>r.id===id) || exampleRoute();
 const reducedMotion = () => window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.hidden=false; clearTimeout(toast.t); toast.t=setTimeout(()=>t.hidden=true, 2200); }
 function hashStr(s){ let h=2166136261; for(const c of s){ h^=c.charCodeAt(0); h=Math.imul(h,16777619);} return h>>>0; }
@@ -142,14 +191,16 @@ const NAV = [
   {id:"red",     label:"Mi red",         short:"Mi red",      ico:"i-net"},
   {id:"liga",    label:"Liga",           short:"Liga",        ico:"i-cup"}
 ];
-const VIEWS = [...NAV.map(n=>n.id), "jugar"];
+const VIEWS = [...NAV.map(n=>n.id), "jugar", "bienvenida", "pollo"];
 let view = VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "juegos";
 let pendingMode = "frog";   // minijuego elegido en Actividades, antes de escoger ruta
-if(view==="jugar") view="juegos";
+if(view==="jugar" || view==="pollo") view="juegos";
 function go(v){ if(location.hash!=="#"+v) location.hash=v; else { view=v; render(); } window.scrollTo(0,0); }
 window.addEventListener("hashchange", ()=>{
   const v=location.hash.slice(1); if(!VIEWS.includes(v)) return;
   view=v;
+  if(v==="pollo" && !diag){ go("juegos"); return; }
+  if(v!=="pollo") diag=null;
   if(game && !((v==="leccion" && game.mode==="quick") || (v==="jugar" && game.mode!=="quick"))) game=null;
   render();
 });
@@ -182,12 +233,18 @@ const myRank = () => league().findIndex(r=>r.me)+1;
 
 /* ================= side panel ================= */
 function renderPanel(){
-  const goal=50, pct=Math.min(100, Math.round(S.dayXp/goal*100));
+  const goal=S.goal||50, pct=Math.min(100, Math.round(S.dayXp/goal*100));
   const disc=Object.entries(S.known).sort((a,b)=>b[1]-a[1]);
   const user=currentUser();
   $("#panel").innerHTML = `
     ${user ? `<a class="card acct-card" href="auth.html"><span class="avatar-mini lg">${esc(user.name[0]||"?").toUpperCase()}</span><span style="min-width:0"><b>${esc(user.name)}</b><small class="muted">${esc(user.email)}</small></span></a>`
       : `<div class="card acct-card guest"><div><b>Guarda tu progreso</b><p class="muted" style="margin:2px 0 10px;font-weight:700;font-size:14px">Crea una cuenta o inicia sesión.</p></div><a class="btn blue block" href="auth.html">Iniciar sesión</a></div>`}
+    <div class="card level-card">
+      <div class="eyebrow">Tu nivel</div>
+      <div class="lv-row"><b>${S.level ? LEVEL_NAMES[S.level] : "Sin diagnóstico"}</b>${levelPips(S.level)}</div>
+      ${S.level ? `<p class="muted lv-info">${LEVEL_INFO[S.level]}</p><button class="link-btn" data-go="bienvenida">Repetir diagnóstico inicial</button>`
+        : `<p class="muted lv-info">Responde unas preguntas y ajusto la dificultad para ti.</p><button class="btn yellow block" data-go="bienvenida">Hacer diagnóstico</button>`}
+    </div>
     <div class="statrow card" style="padding:12px">
       <div class="stat" title="Racha de días">${icon("i-fire")}${S.streak}</div>
       <div class="stat" title="XP total">${icon("i-xp")}${S.xp}</div>
@@ -212,17 +269,27 @@ function renderPanel(){
 function topStats(){
   return `<div class="topstats card" style="justify-content:space-around;padding:10px">
     <div class="stat">${icon("i-fire")}${S.streak}</div><div class="stat">${icon("i-xp")}${S.xp}</div>
-    <div class="stat">${icon("i-cup")}#${myRank()}</div><div class="stat"><span class="muted">Hoy</span>${S.dayXp}/50</div></div>`;
+    <div class="stat">${icon("i-cup")}#${myRank()}</div><div class="stat"><span class="muted">Hoy</span>${S.dayXp}/${S.goal||50}</div>
+    <button class="stat lv-chip" data-go="bienvenida" title="Tu nivel"><span class="muted">Nv</span>${S.level||"?"}</button></div>`;
 }
 function greet(text){
   return `<div class="greet"><svg class="starly" viewBox="0 0 100 100" aria-hidden="true"><use href="#star"/></svg><div class="bubble">${text}</div></div>`;
 }
 
 /* ================= views ================= */
+// ¿Ya hizo el diagnóstico inicial? (el de invitado cuenta y se asocia a la cuenta al entrar)
+function needsOnboarding(){
+  const u=currentUser(); if(!u) return false;
+  if(S.diag && (S.diag.email===u.email || !S.diag.email)){ if(!S.diag.email){ S.diag.email=u.email; save(); } return false; }
+  return true;
+}
 function render(){
+  if(view!=="bienvenida" && view!=="pollo" && !game && needsOnboarding()){ onb={step:0, answers:{}, picked:-1}; view="bienvenida"; if(location.hash!=="#bienvenida") history.replaceState(null,"","#bienvenida"); }
   renderNav(); renderPanel();
   const v=$("#view");
-  if(view==="juegos") v.innerHTML = viewActivities();
+  if(view==="bienvenida") v.innerHTML = viewOnboarding();
+  else if(view==="pollo") v.innerHTML = viewDiag();
+  else if(view==="juegos") v.innerHTML = viewActivities();
   else if(view==="ideas") v.innerHTML = viewIdeas();
   else if(view==="leccion") v.innerHTML = game && game.mode==="quick" ? viewGame() : viewPicker("quick");
   else if(view==="jugar") v.innerHTML = game ? viewGame() : viewPicker(pendingMode);
@@ -237,8 +304,11 @@ function gameTile(mode){
   const art = mode==="knight" ? `${sym("knight")}<span class="mini" style="right:10px">${sym("castle",VB.castle)}</span>`
     : mode==="castle" ? `${sym("castle",VB.castle)}<span class="mini" style="right:10px">${sym("goblin")}</span>`
     : mode==="astro" ? `${sym("rocket",VB.rocket)}<span class="mini" style="right:10px">${sym("earth")}</span>`
+    : mode==="ninja" ? `${sym("s-ninja")}<span class="mini big" style="right:6px">${sym("s-kaiju",VB["s-kaiju"])}</span>`
+    : mode==="samurai" ? `${sym("s-samurai")}<span class="mini" style="right:46px;width:24px;height:24px">${sym("s-demon1")}</span><span class="mini" style="right:8px">${sym("s-demon4")}</span>`
     : sym("frog");
-  return `<button class="tile game g-${mode} ${g.color}" data-pickgame="${mode}"><span class="ico">${art}</span>${g.lives?`<span class="tag">${g.lives} vidas</span>`:""}<h3>${g.name}</h3><p>${g.desc}</p></button>`;
+  const lives=livesFor(g);
+  return `<button class="tile game g-${mode} ${g.color}" data-pickgame="${mode}"><span class="ico">${art}</span><span class="tags">${g.isNew?`<span class="tag new">Nuevo</span>`:""}${lives?`<span class="tag">${lives} vidas</span>`:""}</span><h3>${g.name}</h3><p>${g.desc}</p></button>`;
 }
 function viewActivities(){
   const hi = S.xp===0 ? "¡Hola! Soy Starly. Te ayudo a aprender algo nuevo usando lo que ya sabes. ¿Qué hacemos hoy?"
@@ -247,7 +317,7 @@ function viewActivities(){
   <h1 class="page-title">Elige tu actividad</h1>
   ${greet(hi)}
   <h2 class="section-title">Mini juegos</h2>
-  <div class="tiles">${["knight","castle","astro","frog"].map(gameTile).join("")}</div>
+  <div class="tiles">${["ninja","samurai","knight","castle","astro","frog"].map(gameTile).join("")}</div>
   <h2 class="section-title">Aprende y explora</h2>
   <div class="tiles">
     <button class="tile" data-go="ideas"><span class="ico">${icon("i-ideas")}</span><span class="tag">Con IA</span><h3>Mi red de ideas</h3><p>Conecta lo que dominas con lo que quieres aprender.</p></button>
@@ -263,10 +333,10 @@ function viewPicker(mode){
   const art = mode==="quick" ? icon("i-bolt") : sym(g.ico, VB[g.ico]);
   return `<div class="game-hero">${mode==="quick"?"":`<button class="close" data-go="juegos" aria-label="Volver a actividades">←</button>`}
       <span class="ico">${art}</span><div style="min-width:0"><h1 class="page-title">${g.name}</h1><p class="muted" style="margin:4px 0 0;font-weight:700">${g.desc}</p></div></div>
-    ${g.lives ? `<div class="note">Tienes ${g.lives} vidas. Si fallas una pregunta, pierdes una vida y la pregunta vuelve al final. Si te quedas sin vidas, no sumas XP.</div>`
+    ${g.lives ? `<div class="note">Tienes ${livesFor(g)} vidas (nivel ${LEVEL_NAMES[lvl()]}). Si fallas una pregunta, pierdes una vida y la pregunta vuelve al final. Si te quedas sin vidas, no sumas XP.</div>`
       : `<div class="note">Necesitas al menos ${PASS_MIN} de 6 respuestas correctas para sumar XP.</div>`}
     <div class="eyebrow">Elige una ruta</div>
-    <div class="route-pick">${allRoutes().map(r=>`<button class="route-btn ${r.id===S.active?"current":""}" data-play="${r.id}" data-mode="${mode}"><span>${esc(r.from)} → ${esc(r.to)}<small>${r.example?"Ruta de ejemplo · 6 preguntas":`6 preguntas · mejor ${r.best}/6`}</small></span><span aria-hidden="true">›</span></button>`).join("")}</div>
+    <div class="route-pick">${allRoutes().map(r=>`<button class="route-btn ${r.id===S.active?"current":""}" data-play="${r.id}" data-mode="${mode}"><span>${esc(r.from)} → ${esc(r.to)}<small>${r.example?"Ruta de ejemplo":`Mejor ${r.best}/6`} · nivel ${LEVEL_NAMES[routeLevel(r)]}${regenBusy[r.id]?" · ajustando…":""}</small></span><span aria-hidden="true">›</span></button>`).join("")}</div>
     <a href="#ideas" class="btn blue block">Crear una ruta con IA</a>`;
 }
 
@@ -310,9 +380,11 @@ function viewMap(r){
   const nameB = id => (r.b.find(p=>p.id===id)||{}).t || "";
   const label = {igual:"Igual", similar:"Similar", distinta:"Distinta"};
   return `<div class="route-head">
-      <div><div class="eyebrow">${r.example?"Ruta de ejemplo":"Tu ruta"}</div><h1 class="page-title">${esc(r.from)} → ${esc(r.to)}</h1></div>
+      <div><div class="eyebrow">${r.example?"Ruta de ejemplo":"Tu ruta"} · nivel ${LEVEL_NAMES[routeLevel(r)]}</div><h1 class="page-title">${esc(r.from)} → ${esc(r.to)}</h1></div>
       <button class="btn ghost" id="backIdeas">Nueva ruta</button>
     </div>
+    ${regenBusy[r.id] ? `<div class="note">Ajustando las preguntas a tu nivel…</div>`
+      : routeLevel(r)!==lvl() ? `<div class="note lv-note">Esta ruta está en nivel ${LEVEL_NAMES[routeLevel(r)]} y tú vas en ${LEVEL_NAMES[lvl()]}. <button class="link-btn" data-regen="${r.id}">Ajustar preguntas a mi nivel</button></div>` : ""}
     <div class="legend"><span><i style="border-color:var(--green)"></i>Igual</span><span><i style="border-color:var(--yellow-d)"></i>Similar</span><span><i style="border-color:var(--orange);border-top-style:dashed"></i>Distinta</span></div>
     <div class="card">
       <div class="map" id="map">
@@ -404,8 +476,9 @@ async function generate(from, to){
   let timedOut = false;
   const timer = setTimeout(()=>{ timedOut=true; ctl.abort(); }, CLIENT_TIMEOUT_MS);
   try{
-    const j = await askServer({from, to, known, steps: STEPS}, ctl.signal).catch(e=>{ throw (timedOut ? {code:"timeout"} : e); });
+    const j = await askServer({from, to, known, steps: STEPS, level: lvl()}, ctl.signal).catch(e=>{ throw (timedOut ? {code:"timeout"} : e); });
     const r = validRoute(j, from, to);
+    if(r) r.level = lvl();
     if(!r){ ideas = {...ideas, status:"idle", error:"La respuesta de la IA vino incompleta. Prueba otra vez o cambia un poco los nombres."}; }
     else { S.routes.push(r); S.active=r.id; S.known[from]=Math.max(S.known[from]||0,40); S.known[to]=S.known[to]||10; save(); ideas = {...ideas, status:"idle", routeId:r.id, sel:-1}; toast("Ruta guardada en Mi red"); }
   }catch(e){
@@ -424,6 +497,27 @@ async function generate(from, to){
   if(view==="ideas") render();
 }
 
+// Vuelve a generar las preguntas de una ruta al nivel actual (en segundo plano).
+const regenBusy = {};
+async function regenerateRoute(id, quiet){
+  const r = routeById(id), level = lvl();
+  if(regenBusy[r.id] || routeLevel(r)===level) return;
+  regenBusy[r.id] = true; if(!quiet) render();
+  try{
+    const j = await askServer({from:r.from, to:r.to, known:[], steps:STEPS, level}, undefined);
+    const fresh = validRoute(j, r.from, r.to);
+    if(fresh){
+      const patch = {a:fresh.a, b:fresh.b, links:fresh.links, questions:fresh.questions, bridges:fresh.bridges.length?fresh.bridges:(r.bridges||[]), level};
+      if(r.example) S.exOverride = patch;
+      else Object.assign(S.routes.find(x=>x.id===r.id), patch);
+      save();
+      toast(`Ajusté “${r.from} → ${r.to}” a nivel ${LEVEL_NAMES[level]}`);
+    }
+  }catch(e){ /* si falla, la ruta se queda como estaba */ }
+  delete regenBusy[r.id];
+  if(!game || game.done) render();
+}
+
 /* ================= motor de juegos ================= */
 let game = null;
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
@@ -431,8 +525,9 @@ function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.rand
 function startGame(id, mode){
   mode = GAMES[mode] ? mode : "quick";
   const r=routeById(id), cfg=GAMES[mode]; S.active=r.id; save();
+  const lives = livesFor(cfg);
   game = {mode, routeId:r.id, total:r.questions.length, queue:r.questions.map((_,i)=>i),
-    progress:0, prev:0, lives:cfg.lives, prevLives:cfg.lives, maxLives:cfg.lives,
+    progress:0, prev:0, lives, prevLives:lives, maxLives:lives,
     answered:false, picked:-1, ok:false, fx:null, done:false, won:false,
     earned:0, correct:0, first:0, mistakes:0, tries:{}, combo:0, lastGain:0,
     orders:r.questions.map(q=>shuffle(q.options.map((_,k)=>k)))};
@@ -445,7 +540,9 @@ const FEED = {
   frog:   {ok:"¡Salto perfecto!",              bad:"¡Splash! La respuesta era:"},
   knight: {ok:"¡Estocada! El caballero avanza.", bad:"¡Ouch! El duende bloquea el camino."},
   castle: {ok:"¡Flechazo! Invasor derribado.",   bad:"¡La muralla recibió un golpe!"},
-  astro:  {ok:"¡Láser certero! Asteroide destruido.", bad:"¡Impacto! El escudo se debilita."}
+  astro:  {ok:"¡Láser certero! Asteroide destruido.", bad:"¡Impacto! El escudo se debilita."},
+  ninja:  {ok:"¡Shuriken directo! El kaiju pierde vida.", bad:"¡El kaiju contraataca con fuego!"},
+  samurai:{ok:"¡Corte limpio! Demonio vencido.", bad:"¡El demonio te golpea!"}
 };
 
 function hud(r){
@@ -522,7 +619,39 @@ function sceneAstro(end){
   return out;
 }
 
+// Ninja contra el kaiju: el kaiju tiene una barra de vida; cada acierto le quita un bloque.
+function sceneNinja(end){
+  const T=game.total, hp=T-game.progress, won=end&&game.won, lost=end&&!game.won;
+  const hit = game.fx==="ok" && !end, roar = game.fx==="bad" && !end;
+  const bar = Array.from({length:T},(_,i)=>`<i class="${i<hp?"on":""} ${hit&&i===hp?"just":""}"></i>`).join("");
+  return `<div class="scene ninja" aria-hidden="true"><div class="moon"></div><div class="city c1"></div><div class="city c2"></div>
+    <div class="kaiju-hp"><b>KAIJU</b><span class="hp">${bar}</span></div>
+    <div class="kaiju ${won?"down":hit?"hurt":roar?"roar":"idle"}">${sym("s-kaiju",VB["s-kaiju"])}</div>
+    ${roar ? `<div class="fire"></div>` : ""}
+    ${hit ? `<div class="star-throw">${sym("s-shuriken","0 0 40 40")}</div><div class="star-throw two">${sym("s-shuriken","0 0 40 40")}</div><span class="dmg">-1</span>` : ""}
+    <div class="ninja-hero ${lost?"ko":won?"cheer":hit?"dash":roar?"shakey":"idle"}">${sym("s-ninja")}</div>
+    <span class="scene-label">${won?"¡Kaiju derrotado!":lost?"El kaiju ganó esta vez":`Vida del kaiju: ${hp} de ${T}`}</span></div>`;
+}
+
+// Samurái contra demonios: un demonio distinto por pregunta y cada uno más grande que el anterior.
+const demonSize = i => 0.55 + i*0.14;
+function sceneSamurai(end){
+  const T=game.total, won=end&&game.won, lost=end&&!game.won;
+  const cur=game.progress, hit=game.fx==="ok"&&!end, bad=game.fx==="bad"&&!end;
+  const demon = (i, cls, extra="") => `<div class="demon ${cls}" style="--s:${demonSize(i)};${extra}">${sym("s-demon"+(i%6+1))}</div>`;
+  let out=`<div class="scene samurai" aria-hidden="true"><div class="sunset"></div><div class="mount m1"></div><div class="mount m2"></div><div class="torii"></div>
+    <span class="petal p1"></span><span class="petal p2"></span><span class="petal p3"></span><span class="petal p4"></span><div class="ground"></div>`;
+  if(hit){ out+=demon(cur-1,"poof"); out+=`<div class="slash"></div>`; if(cur<T) out+=demon(cur,"enter","animation-delay:.6s"); }
+  else if(!won && cur<T) out+=demon(cur, bad?"lunge":lost?"gloat":"idle");
+  out+=`<div class="next-demons">${Array.from({length:Math.max(0,T-cur-1)},(_,k)=>sym("s-demon"+((cur+1+k)%6+1))).join("")}</div>`;
+  out+=`<div class="samurai-hero ${lost?"kneel":won?"cheer":hit?"dash":bad?"shakey":"idle"}">${sym("s-samurai")}</div>`;
+  out+=`<span class="scene-label">${won?"¡Todos los demonios vencidos!":lost?"Los demonios resistieron":`Demonio ${Math.min(cur+1,T)} de ${T}`}</span></div>`;
+  return out;
+}
+
 function scene(end){
+  if(game.mode==="ninja") return sceneNinja(end);
+  if(game.mode==="samurai") return sceneSamurai(end);
   if(game.mode==="knight") return sceneKnight(end);
   if(game.mode==="castle") return sceneCastle(end);
   if(game.mode==="astro") return sceneAstro(end);
@@ -542,7 +671,7 @@ function viewGame(){
     body = `<div class="pond" id="pond">
       <div class="pads">${order.map((k,pos)=>`<button class="pad ${optCls(k)} ${game.answered?"":"enter"}" style="--i:${pos}" data-pick="${k}" ${game.answered?"disabled":""}><span class="k">${pos+1}</span>${esc(q.options[k])}</button>`).join("")}</div>
       <div class="home-pad"></div>
-      <div class="frog" id="frog"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#frog"/></svg></div></div>`;
+      <div class="frog" id="frogActor"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#frog"/></svg></div></div>`;
   } else {
     body = `${scene(false)}
       <div class="opts">${order.map((k,pos)=>`<button class="opt ${optCls(k)} ${game.answered?"":"enter"}" style="--i:${pos}" data-pick="${k}" ${game.answered?"disabled":""}><span class="k">${pos+1}</span><span>${esc(q.options[k])}</span></button>`).join("")}</div>`;
@@ -565,7 +694,9 @@ const RESULT_TITLE = {
   frog:   w=>w?"¡Lección completada!":"La ranita no llegó a la orilla",
   knight: w=>w?"¡Salvaste a la princesa!":"El caballero tuvo que retirarse",
   castle: w=>w?"¡El castillo resiste!":"El castillo cayó",
-  astro:  w=>w?"¡Aterrizaje en la Tierra!":"El cohete se quedó sin escudo"
+  astro:  w=>w?"¡Aterrizaje en la Tierra!":"El cohete se quedó sin escudo",
+  ninja:  w=>w?"¡Derrotaste al kaiju!":"El kaiju sigue en pie",
+  samurai:w=>w?"¡Venciste a todos los demonios!":"Los demonios ganaron esta vez"
 };
 function confetti(){
   const colors=["#ef8c47","#ebe43f","#74c652","#0082b2"];
@@ -584,15 +715,15 @@ function viewResult(r){
       <p class="muted" style="margin:0;font-weight:700">${esc(r.from)} → ${esc(r.to)} · ${sub}</p>
       <div class="big"><div class="box ${game.won?"":"zero"}"><b>XP ganada</b><span class="countup" data-to="${game.earned}">${game.earned}</span></div><div class="box g"><b>A la primera</b><span>${game.first}/${game.total}</span></div></div>
       <p style="margin:0;font-weight:700">Vas en el puesto <b>#${myRank()}</b> de la ${LEAGUE_NAME}.</p>
-      <div class="actions">
-        <button class="btn ghost" data-play="${r.id}" data-mode="${game.mode}">Repetir</button>
-        <button class="btn blue" data-go="juegos">Otra actividad</button>
-        <button class="btn" data-go="liga">Ver liga</button>
+      <div class="diag-cta rise">
+        <span class="diag-cta-art">${sym("s-chicken",VB["s-chicken"])}</span>
+        <div style="min-width:0;text-align:left"><b>Diagnóstico rápido</b><p>Ayuda al pollo a cruzar la calle. Con tus respuestas ajusto la dificultad de tus actividades.</p></div>
+        <button class="btn blue" data-diag="${r.id}" data-mode="${game.mode}">Continuar al diagnóstico</button>
       </div></div>`;
 }
 
 function placeFrog(target, animate){
-  const pond=$("#pond"), frog=$("#frog"); if(!pond||!frog) return;
+  const pond=$("#pond"), frog=$("#frogActor"); if(!pond||!frog) return;
   const pb=pond.getBoundingClientRect();
   let x=pb.width/2, y=pb.height-38;
   if(target){ const b=target.getBoundingClientRect(); x=b.left-pb.left+b.width/2; y=b.top-pb.top+b.height/2; }
@@ -613,16 +744,16 @@ function pick(k){
     if(ok){ game.correct++; game.progress++; game.combo++; game.lastGain = game.tries[qi]===1 ? 10 : 5; game.earned += game.lastGain; if(game.tries[qi]===1) game.first++; }
     else { game.mistakes++; game.combo=0; game.lastGain=0; if(game.maxLives) game.lives--; }
     game.fx = ok ? "ok" : "bad";
-    if(window.SFX) SFX.play(ok ? "ok" : "bad");
+    if(window.SFX){ SFX.play(ok ? "ok" : "bad"); if(ok && (game.mode==="ninja"||game.mode==="samurai")) setTimeout(()=>SFX.play("slash"),120); if(!ok && game.mode==="ninja") SFX.play("roar"); }
     render();
     if(game.mode==="frog"){
-      const f=$("#frog"); placeFrog(document.querySelector(`[data-pick="${k}"]`), false); f.classList.add(ok?"cheer":"sink");
+      const f=$("#frogActor"); placeFrog(document.querySelector(`[data-pick="${k}"]`), false); f.classList.add(ok?"cheer":"sink");
     }
     const nb=$("#next"); if(nb) nb.focus({preventScroll:true});
     const fb=document.querySelector(".feedback"); if(fb) fb.scrollIntoView({block:"nearest", behavior:"smooth"});
   };
   if(game.mode==="frog"){
-    const frog=$("#frog"); frog.classList.add("hop"); placeFrog(document.querySelector(`[data-pick="${k}"]`), true);
+    const frog=$("#frogActor"); frog.classList.add("hop"); placeFrog(document.querySelector(`[data-pick="${k}"]`), true);
     setTimeout(apply, 460);
   } else apply();
 }
@@ -646,9 +777,219 @@ function nextQ(){
     }
     const real=S.routes.find(x=>x.id===r.id); if(real){ if(game.won) real.best=Math.max(real.best||0, game.first); real.plays=(real.plays||0)+1; save(); }
     game.done=true;
+    prefetchDiag(r.id);   // se piden las preguntas del diagnóstico mientras ve su resultado
     if(window.SFX) setTimeout(()=>SFX.play(game && game.won ? "win" : "lose"), 150);
   }
   render(); window.scrollTo({top:0});
+}
+
+/* ================= Diagnóstico inicial (al iniciar sesión) ================= */
+function viewOnboarding(){
+  const u=currentUser(), total=ONB.length;
+  if(onb.step===0){
+    return `<div class="onb">
+      ${greet(`¡Hola${u?", "+esc(u.name):""}! Antes de empezar quiero conocerte un poquito para que tus actividades no sean ni muy fáciles ni muy difíciles.`)}
+      <div class="card onb-card pop-in">
+        <h1 class="page-title">Conozcámonos</h1>
+        <p class="muted onb-sub">Son ${total} preguntas rápidas, como 2 minutos. No es un examen: no hay calificación.</p>
+        <ul class="onb-list"><li><b>3</b> sobre ti y cómo te gusta aprender</li><li><b>4</b> mini retos para calentar el cerebro</li></ul>
+        <button class="btn block" data-onb-start>¡Vamos!</button>
+        ${S.diag ? `<button class="link-btn" data-go="juegos" style="align-self:center">Ahora no</button>` : ""}
+      </div></div>`;
+  }
+  if(onb.step>total) return viewOnboardingResult();
+  const i=onb.step, q=ONB[i-1], answered=onb.picked>=0;
+  const correct = q.quiz ? q.opts.findIndex(o=>o[1]===1) : -1;
+  const cls = k => !answered ? "enter" : q.quiz ? (k===correct?"ok":k===onb.picked?"bad":"fade") : (k===onb.picked?"chosen":"fade");
+  return `<div class="onb">
+    <div class="onb-top"><span class="onb-count">Pregunta ${i} de ${total}</span>
+      <div class="onb-dots">${ONB.map((_,k)=>`<i class="${k<i-1?"done":k===i-1?"cur":""}"></i>`).join("")}</div></div>
+    ${greet(esc(q.say))}
+    <div class="card onb-card ${answered?"":"qslide"}">
+      ${q.quiz?`<span class="chip step-chip">Mini reto</span>`:""}
+      <h2 class="qtext">${esc(q.q)}</h2>
+      <div class="opts">${q.opts.map(([t],k)=>`<button class="opt ${cls(k)}" style="--i:${k}" data-onb="${k}" ${answered?"disabled":""}><span class="k">${k+1}</span><span>${esc(t)}</span></button>`).join("")}</div>
+      ${answered && q.quiz ? `<p class="onb-fb ${onb.picked===correct?"ok":"bad"}">${onb.picked===correct?"¡Muy bien!":`¡Buen intento! Era: ${esc(q.opts[correct][0])}`}</p>` : ""}
+    </div></div>`;
+}
+
+function pickOnb(k){
+  const q=ONB[onb.step-1]; if(!q || onb.picked>=0) return;
+  onb.picked=k; onb.answers[q.id]=q.opts[k][1];
+  if(q.quiz && window.SFX) SFX.play(q.opts[k][1]===1 ? "ok" : "bad");
+  render();
+  setTimeout(()=>{ if(view!=="bienvenida") return; onb.step++; onb.picked=-1; if(onb.step>ONB.length) finishOnboarding(); render(); window.scrollTo(0,0); }, q.quiz ? 1300 : 450);
+}
+
+function finishOnboarding(){
+  const a=onb.answers, u=currentUser();
+  const correct=["r1","r2","r3","r4"].reduce((s,k)=>s+(a[k]||0),0);
+  const level=Math.max(1, Math.min(5, (a.etapa||2) + (a.actitud||0) + (correct>=4 ? 1 : correct<=1 ? -1 : 0)));
+  const prev=S.level;
+  S.level=level; S.goal=a.tiempo||50;
+  S.diag={email:u?u.email:"", date:Date.now(), level, correct};
+  S.levelLog.push({t:Date.now(), level, src:"inicial"}); save();
+  onb.result={level, correct, prev};
+  if(window.SFX) setTimeout(()=>SFX.play("win"),150);
+  // las actividades se ajustan al nivel nuevo
+  regenerateRoute("ejemplo", true);
+  if(S.active && S.active!=="ejemplo") regenerateRoute(S.active, true);
+}
+
+function viewOnboardingResult(){
+  if(!onb.result) finishOnboarding();
+  const {level, correct}=onb.result;
+  return `<div class="onb"><div class="card onb-card onb-result">${confetti()}
+    <svg class="starly spin-in" width="110" height="110" aria-hidden="true"><use href="#star"/></svg>
+    <div class="eyebrow">Tu punto de partida</div>
+    <h1 class="page-title pop-in">Nivel ${level} · ${LEVEL_NAMES[level]}</h1>
+    <div class="big-pips">${levelPips(level)}</div>
+    <p class="onb-sub" style="font-weight:700">${LEVEL_INFO[level]}</p>
+    <p class="muted onb-sub">Acertaste ${correct} de 4 mini retos. Tu meta diaria: ${S.goal} XP.</p>
+    <div class="note">Después de cada actividad haré un mini diagnóstico: ayudar a un pollo a cruzar la calle. Si lo logras, tu nivel sube y tus preguntas se vuelven más retadoras.</div>
+    <button class="btn block" data-go="juegos">¡Empezar a jugar!</button>
+  </div></div>`;
+}
+
+/* ================= Diagnóstico tras cada actividad: el pollo cruza la calle ================= */
+function fallbackDiagQs(r){
+  return shuffle(r.questions.map(q=>({q:q.q, options:q.options, answer:q.answer, why:q.why, level:routeLevel(r)}))).slice(0,7);
+}
+// Pide las preguntas por adelantado (mientras el estudiante ve su resultado).
+function prefetchDiag(id){
+  const r=routeById(id), key=r.id+":"+lvl();
+  if(diagCache[key]) return diagCache[key];
+  const p = (async()=>{
+    try{
+      const res = await fetch("/api/diagnostico", {method:"POST", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({from:r.from, to:r.to, level:lvl(), temas:r.b.map(x=>x.t)}), signal:AbortSignal.timeout(45000)});
+      if(!res.ok) throw 0;
+      const text=await res.text(); if(text.includes("@@ERROR")) throw 0;
+      const j=JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}")+1));
+      const qs=(j.preguntas||[]).map(q=>({q:String(q.q||""), options:(q.opciones||[]).map(String).slice(0,4), answer:Number(q.correcta)||0, why:String(q.porque||""), level:Number(q.nivel)||lvl()}))
+        .filter(q=>q.q && q.options.length>=2 && q.answer<q.options.length);
+      if(qs.length<5) throw 0;
+      return {qs, ai:true};
+    }catch(e){ delete diagCache[key]; return {qs:fallbackDiagQs(r), ai:false}; }
+  })();
+  diagCache[key]=p;
+  return p;
+}
+
+async function startDiag(id, mode){
+  const r=routeById(id), levelBefore=lvl();
+  const my = diag = {status:"loading", routeId:r.id, mode, from:r.from, to:r.to, levelBefore, qs:[], i:0,
+    steps:0, prevSteps:0, misses:0, answered:false, picked:-1, ok:false, fx:null, orders:[]};
+  game=null;
+  if(view==="pollo") render(); else go("pollo");
+  const {qs, ai} = await prefetchDiag(r.id);
+  delete diagCache[r.id+":"+levelBefore];   // la próxima vez, preguntas nuevas
+  if(diag!==my) return;
+  Object.assign(diag, {status:"play", qs, ai, orders:qs.map(q=>shuffle(q.options.map((_,k)=>k)))});
+  if(view==="pollo") render();
+}
+
+function pickDiag(k){
+  if(!diag || diag.status!=="play" || diag.answered) return;
+  const q=diag.qs[diag.i], ok=k===q.answer;
+  diag.answered=true; diag.picked=k; diag.ok=ok; diag.prevSteps=diag.steps;
+  if(ok) diag.steps++; else diag.misses++;
+  diag.fx = ok ? "ok" : "bad";
+  if(window.SFX) SFX.play(ok ? "ok" : "honk");
+  render();
+  const nb=$("#dnext"); if(nb) nb.focus({preventScroll:true});
+  const fb=document.querySelector(".feedback"); if(fb) fb.scrollIntoView({block:"nearest", behavior:"smooth"});
+}
+
+function nextDiag(){
+  if(!diag || !diag.answered) return;
+  diag.i++; diag.answered=false; diag.picked=-1; diag.fx=null; diag.prevSteps=diag.steps;
+  if(diag.steps>=DIAG_STEPS || diag.misses>=DIAG_MAX_MISSES || diag.i>=diag.qs.length) finishDiag();
+  render(); window.scrollTo({top:0});
+}
+
+function finishDiag(){
+  const crossed = diag.steps>=DIAG_STEPS, before=diag.levelBefore;
+  // Cruzar = demostró la habilidad → sube de nivel. Muy pocos pasos → baja uno para ir más cómodo.
+  const after = crossed ? Math.min(5, before+1) : diag.steps<=2 ? Math.max(1, before-1) : before;
+  Object.assign(diag, {status:"done", crossed, levelAfter:after});
+  S.level=after; S.levelLog.push({t:Date.now(), level:after, src:"pollo", pasos:diag.steps}); save();
+  if(window.SFX) setTimeout(()=>SFX.play(crossed ? "win" : "lose"), 300);
+  regenerateRoute(diag.routeId, true);   // las preguntas de esa actividad se ajustan al nivel nuevo
+}
+
+const LANES = [   // de arriba hacia abajo
+  {dir:"r", v:[["s-bus","#1a9fd1",9,0],["s-car","#74c652",9,4.5]]},
+  {dir:"l", v:[["s-car","#e53935",6,0],["s-moto","#5f6b74",6,3]]},
+  {dir:"r", v:[["s-truck","#ef8c47",11,0],["s-car","#7a5af8",11,5.5]]},
+  {dir:"l", v:[["s-taxi","#ebe43f",7,1],["s-car","#0082b2",7,4.5]]},
+  {dir:"r", v:[["s-car","#d9488f",8,2],["s-icecream","#ffffff",8,6]]}
+];
+const VEH_VB = {"s-car":"0 0 100 50","s-taxi":"0 0 100 56","s-truck":"0 0 160 60","s-bus":"0 0 160 60","s-moto":"0 0 60 44","s-icecream":"0 0 120 60"};
+const chickBottom = p => p<=0 ? "calc(var(--sw)/2)" : p>=DIAG_STEPS ? `calc(var(--sw)*1.5 + ${DIAG_STEPS}*var(--lane))` : `calc(var(--sw) + ${p}*var(--lane))`;
+
+function sceneStreet(){
+  const d=diag, done=d.status==="done";
+  const from = done && !d.crossed ? d.steps : d.prevSteps;
+  const to = done ? (d.crossed ? DIAG_STEPS : 0) : d.steps;
+  const scaredLane = d.fx==="bad" ? LANES.length-1-Math.min(d.steps, LANES.length-1) : -1;
+  const chickCls = done ? (d.crossed ? "party" : "flee") : d.fx==="ok" ? "hop" : d.fx==="bad" ? "scared" : "idle";
+  return `<div class="street" aria-hidden="true">
+    <div class="walk top"><span class="tree t1"></span><span class="tree t2"></span><span class="house"></span><span class="goal-flag">META</span><span class="tree t3"></span></div>
+    <div class="road">
+      <div class="zebra"></div>
+      ${LANES.map((ln,li)=>`<div class="lane ${ln.dir}">${ln.v.map(([s,c,dur,del])=>`<span class="veh" style="--car:${c};animation-duration:${dur}s;animation-delay:-${del}s">${sym(s,VEH_VB[s])}</span>`).join("")}
+        ${li===scaredLane ? `<span class="veh zoom ${ln.dir}" style="--car:#e53935">${sym("s-truck",VEH_VB["s-truck"])}</span><span class="honk">¡PIII!</span>` : ""}</div>`).join("")}
+    </div>
+    <div class="walk bottom"><span class="semaforo"></span><span class="lamp"></span></div>
+    <div class="chick ${chickCls}" style="bottom:${chickBottom(from)}" data-bottom="${chickBottom(to)}">${sym("s-chicken",VB["s-chicken"])}${d.fx==="bad"?`<span class="feather f1"></span><span class="feather f2"></span><span class="feather f3"></span>`:""}</div>
+    ${done && d.crossed ? `<div class="hearts-fly chick-hearts">${icon("heart")}${icon("heart")}${icon("heart")}</div>` : ""}
+    <span class="scene-label">${done ? (d.crossed?"¡Cruzó la calle!":"De vuelta a la banqueta") : `Paso ${d.steps} de ${DIAG_STEPS}`}</span>
+  </div>`;
+}
+
+function viewDiag(){
+  const d=diag; if(!d) return "";
+  const top = `<div class="game-top"><button class="close" id="diagQuit" aria-label="Salir del diagnóstico">✕</button>
+    <div class="steps-track" aria-label="${d.steps} de ${DIAG_STEPS} pasos">${Array.from({length:DIAG_STEPS},(_,i)=>`<i class="${i<d.steps?"on":""} ${d.fx==="ok"&&i===d.steps-1?"just":""}"></i>`).join("")}</div>
+    <span class="scares" title="Sustos">${Array.from({length:DIAG_MAX_MISSES},(_,i)=>`<i class="${i<d.misses?"on":""}"></i>`).join("")}</span></div>`;
+  if(d.status==="loading"){
+    return `${top}<div class="diag-head"><div class="eyebrow">Diagnóstico · ${esc(d.from)} → ${esc(d.to)}</div><h1 class="page-title">El pollo quiere cruzar</h1></div>
+      ${sceneStreet()}
+      <div class="card thinking"><svg class="starly" viewBox="0 0 100 100" aria-hidden="true"><use href="#star"/></svg>
+        <div style="flex:1;min-width:0"><b>Preparando preguntas a tu nivel…</b><div class="load-bar"><i></i></div></div></div>`;
+  }
+  if(d.status==="done"){
+    const up=d.levelAfter>d.levelBefore, down=d.levelAfter<d.levelBefore;
+    return `<div class="diag-head"><div class="eyebrow">Diagnóstico · ${esc(d.from)} → ${esc(d.to)}</div></div>
+      ${sceneStreet()}
+      <div class="result card ${d.crossed?"":"lost"}">${d.crossed?confetti():""}
+        <h1 class="page-title pop-in">${d.crossed?"¡El pollo cruzó la calle!":"El pollo se regresó a la banqueta"}</h1>
+        <p class="muted" style="margin:0;font-weight:700">Avanzaste ${d.steps} de ${DIAG_STEPS} pasos con ${d.misses} ${d.misses===1?"susto":"sustos"}.</p>
+        <div class="lv-change ${up?"up":down?"down":""}">
+          <span>Nivel ${d.levelBefore}</span><span class="arrow-lv">${up?"↑":down?"↓":"="}</span><b>Nivel ${d.levelAfter} · ${LEVEL_NAMES[d.levelAfter]}</b>
+        </div>
+        ${levelPips(d.levelAfter)}
+        <p style="margin:0;font-weight:700">${up?"¡Demostraste la habilidad! Tus próximas preguntas serán más retadoras."
+          : down?"Bajamos un nivel para que practiques con más calma. ¡Vas a subir pronto!"
+          : "Te mantienes en tu nivel. Sigue practicando para hacer cruzar al pollo."}</p>
+        ${regenBusy[d.routeId] ? `<p class="muted" style="margin:0;font-weight:700">Ajustando las preguntas de “${esc(d.from)} → ${esc(d.to)}”…</p>` : ""}
+        <div class="actions">
+          <button class="btn ghost" data-play="${d.routeId}" data-mode="${d.mode||"quick"}">Repetir actividad</button>
+          <button class="btn blue" data-go="juegos">Otra actividad</button>
+          <button class="btn" data-go="liga">Ver liga</button>
+        </div></div>`;
+  }
+  const q=d.qs[d.i], order=d.orders[d.i], ok=d.answered&&d.ok;
+  const optCls = k => !d.answered ? "enter" : k===q.answer ? "ok" : k===d.picked ? "bad" : "fade";
+  return `${top}${sceneStreet()}
+    <div class="qcard ${d.answered?"":"enter"}"><div style="display:flex;flex-wrap:wrap;gap:8px"><span class="chip step-chip">Diagnóstico · pregunta ${d.i+1}</span><span class="chip">Nivel ${LEVEL_NAMES[Math.min(5,Math.max(1,q.level))]}</span></div>
+      <h2 class="qtext">${esc(q.q)}</h2></div>
+    <div class="opts">${order.map((k,pos)=>`<button class="opt ${optCls(k)}" style="--i:${pos}" data-dpick="${k}" ${d.answered?"disabled":""}><span class="k">${pos+1}</span><span>${esc(q.options[k])}</span></button>`).join("")}</div>
+    ${d.answered ? `<div class="feedback ${ok?"ok":"bad"}" aria-live="polite"><h3>${ok?"¡Un paso adelante!":"¡Bocinazo! El pollo se asustó."}</h3>
+      ${ok?"":`<p>La respuesta correcta era: <b>${esc(q.options[q.answer])}</b></p>`}<p>${esc(q.why)}</p>
+      <button class="btn ${ok?"":"orange"} block" id="dnext">Continuar</button></div>`
+      : `<p class="muted" style="margin:0;font-weight:700;text-align:center">Acierta ${DIAG_STEPS} para cruzar. Con ${DIAG_MAX_MISSES} sustos, el pollo se regresa.</p>`}`;
 }
 
 /* ---------- Mi red ---------- */
@@ -771,6 +1112,9 @@ function afterRender(){
   // anima los actores de la escena de su posición anterior a la nueva
   const movers=[...document.querySelectorAll(".actor[data-to]")].filter(el=>el.dataset.from!==el.dataset.to);
   if(movers.length) requestAnimationFrame(()=>requestAnimationFrame(()=>movers.forEach(el=>el.style.left=el.dataset.to+"%")));
+  // el pollo avanza (o regresa) de su posición anterior a la nueva
+  const chick=document.querySelector(".chick[data-bottom]");
+  if(chick && chick.style.bottom!==chick.dataset.bottom) requestAnimationFrame(()=>requestAnimationFrame(()=>{ chick.style.bottom=chick.dataset.bottom; }));
   const f=$("#ideaForm");
   if(f) f.addEventListener("submit", e=>{ e.preventDefault(); const a=$("#fFrom").value.trim(), b=$("#fTo").value.trim(); if(a&&b) generate(a,b); });
 }
@@ -789,7 +1133,14 @@ document.addEventListener("click", e=>{
   let b;
   if(t.closest("[data-theme-toggle]")){ toggleTheme(); return; }
   if(t.closest("[data-sound-toggle]")){ SFX.toggle(); renderNav(); return; }
-  if((b=t.closest("[data-go]"))){ e.preventDefault(); if(b.dataset.go==="juegos"||b.dataset.go==="leccion") game=null; go(b.dataset.go); return; }
+  if((b=t.closest("[data-go]"))){ e.preventDefault(); if(b.dataset.go==="juegos"||b.dataset.go==="leccion") game=null; if(b.dataset.go==="bienvenida") onb={step:0, answers:{}, picked:-1}; go(b.dataset.go); return; }
+  if(t.closest("[data-onb-start]")){ onb.step=1; render(); window.scrollTo(0,0); return; }
+  if((b=t.closest("[data-onb]"))){ pickOnb(+b.dataset.onb); return; }
+  if((b=t.closest("[data-diag]"))){ startDiag(b.dataset.diag, b.dataset.mode); return; }
+  if((b=t.closest("[data-dpick]"))){ pickDiag(+b.dataset.dpick); return; }
+  if(t.closest("#dnext")){ nextDiag(); return; }
+  if(t.closest("#diagQuit")){ diag=null; go("juegos"); return; }
+  if((b=t.closest("[data-regen]"))){ regenerateRoute(b.dataset.regen); return; }
   if((b=t.closest("[data-pickgame]"))){ pendingMode=b.dataset.pickgame; game=null; go("jugar"); return; }
   if((b=t.closest("[data-pair]"))){ const [a,c]=b.dataset.pair.split("|"); $("#fFrom").value=a; $("#fTo").value=c; ideas.from=a; ideas.to=c; return; }
   if((b=t.closest("[data-open]"))){ ideas={...ideas, routeId:b.dataset.open, sel:-1, error:""}; go("ideas"); render(); return; }
@@ -804,6 +1155,14 @@ document.addEventListener("click", e=>{
 });
 document.addEventListener("keydown", e=>{
   if(e.target.matches("input,textarea")) return;
+  if(view==="pollo" && diag && diag.status==="play"){
+    if(!diag.answered && /^[1-4]$/.test(e.key)){ const p=[...document.querySelectorAll("[data-dpick]")][+e.key-1]; if(p){ e.preventDefault(); pickDiag(+p.dataset.dpick); } }
+    else if(diag.answered && e.key==="Enter" && document.activeElement && document.activeElement.id!=="dnext"){ e.preventDefault(); nextDiag(); }
+    return;
+  }
+  if(view==="bienvenida" && onb.step>0 && onb.step<=ONB.length && onb.picked<0 && /^[1-5]$/.test(e.key)){
+    const p=[...document.querySelectorAll("[data-onb]")][+e.key-1]; if(p){ e.preventDefault(); pickOnb(+p.dataset.onb); } return;
+  }
   if(game && !game.done && (view==="jugar"||view==="leccion")){
     if(!game.answered && /^[1-4]$/.test(e.key)){ const opts=[...document.querySelectorAll("[data-pick]")]; const p=opts[+e.key-1]; if(p){ e.preventDefault(); pick(+p.dataset.pick); } }
     else if(game.answered && e.key==="Enter" && document.activeElement && document.activeElement.id!=="next"){ e.preventDefault(); nextQ(); }

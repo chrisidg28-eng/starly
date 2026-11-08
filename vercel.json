@@ -6,6 +6,9 @@
     },
     "api/chat.py": {
       "maxDuration": 60
+    },
+    "api/diagnostico.py": {
+      "maxDuration": 60
     }
   }
 }

@@ -30,6 +30,15 @@ DEFAULT_STEPS = [
 ]
 
 
+LEVELS = {
+    1: "Inicial: lenguaje muy sencillo, ejemplos cotidianos, preguntas directas y distractores claramente incorrectos.",
+    2: "Básico: lenguaje sencillo, preguntas de comprensión, distractores fáciles de descartar.",
+    3: "Intermedio: preguntas de aplicación con distractores plausibles.",
+    4: "Avanzado: preguntas de análisis y casos nuevos, vocabulario técnico, distractores sutiles.",
+    5: "Experto: preguntas desafiantes de razonamiento, excepciones y matices, distractores muy sutiles.",
+}
+
+
 def clean(value, max_len=60):
     text = str(value if value is not None else "")
     for ch in "\r\n\"":
@@ -37,13 +46,14 @@ def clean(value, max_len=60):
     return text.strip()[:max_len]
 
 
-def build_prompt(from_, to, known, steps):
+def build_prompt(from_, to, known, steps, level=3):
     if known:
         known_line = f'También sabe: {", ".join(known)}. Llena "puentes" con 1 a 3 conexiones concretas con esas disciplinas.'
     else:
         known_line = '"puentes" debe ser [].'
     steps_text = "; ".join(f"{s['n']}) {s['name']}: {s['hint']}" for s in steps)
     return f"""Eres el motor de Starly: enseñas "{to}" a alguien que domina "{from_}".
+Nivel del estudiante: {LEVELS[level]} Ajusta la dificultad de las preguntas y el lenguaje a ese nivel.
 {known_line}
 
 1. "a": 4 principios clave de {from_}; "b": 4 de {to}. Máximo 6 palabras cada uno.
@@ -91,6 +101,11 @@ def call_model(model, prompt, timeout):
         parts = (cand.get("content") or {}).get("parts") or []
         text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
         if finish == "MAX_TOKENS" or not text.strip():
+            return None, "retry"
+        try:
+            json.loads(text)
+        except ValueError:
+            print(model, "JSON inválido")
             return None, "retry"
         return text, None
     return None, "retry"
@@ -147,5 +162,9 @@ class handler(BaseHTTPRequestHandler):
         else:
             steps = DEFAULT_STEPS
 
-        text, err = ask_gemini(build_prompt(from_, to, known, steps))
+        try:
+            level = min(5, max(1, int(round(float(body.get("level") or 3)))))
+        except (TypeError, ValueError):
+            level = 3
+        text, err = ask_gemini(build_prompt(from_, to, known, steps, level))
         self._send(200, text if text else "@@ERROR:" + err)

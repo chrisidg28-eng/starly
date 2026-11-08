@@ -44,6 +44,12 @@ window.SFX = (function(){
       note(1319, .42, .5, "triangle", .7); note(1568, .42, .5, "sine", .35);
       [2093, 2637, 3136].forEach((f, i) => note(f, .55 + i * .07, .2, "sine", .15));
     },
+    // corte de espada / shuriken: silbido rápido que baja
+    slash(){ note(2400, 0, .12, "sawtooth", .12, 500); note(1600, .02, .1, "sine", .2, 300); },
+    // rugido del kaiju: grave y rasposo
+    roar(){ note(90, 0, .5, "sawtooth", .35, 55); note(130, .05, .45, "square", .15, 70); },
+    // claxon del coche (diagnóstico del pollo)
+    honk(){ [0, .18].forEach(t => { note(370, t, .14, "square", .3); note(466, t, .14, "square", .25); }); },
     // perder: tres notas lentas que bajan
     lose(){ note(392, 0, .3, "triangle", .7); note(330, .28, .3, "triangle", .7); note(262, .56, .6, "triangle", .7, 220); }
   };

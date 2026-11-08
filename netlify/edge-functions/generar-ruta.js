@@ -19,11 +19,20 @@ const DEFAULT_STEPS = [
   { n: 6, name: "Aplicar", hint: "úsalo en un caso nuevo" },
 ];
 
+// Dificultad según el nivel del estudiante (sale del diagnóstico).
+const LEVELS = {
+  1: "Inicial: lenguaje muy sencillo, ejemplos cotidianos, preguntas directas y distractores claramente incorrectos.",
+  2: "Básico: lenguaje sencillo, preguntas de comprensión, distractores fáciles de descartar.",
+  3: "Intermedio: preguntas de aplicación con distractores plausibles.",
+  4: "Avanzado: preguntas de análisis y casos nuevos, vocabulario técnico, distractores sutiles.",
+  5: "Experto: preguntas desafiantes de razonamiento, excepciones y matices, distractores muy sutiles.",
+};
 const clean = (s, max = 60) => String(s ?? "").replace(/[\r\n"]+/g, " ").trim().slice(0, max);
 
 // Prompt corto: menos texto de entrada y salida = respuesta más rápida.
-function buildPrompt(from, to, known, steps) {
+function buildPrompt(from, to, known, steps, level) {
   return `Eres el motor de Starly: enseñas "${to}" a alguien que domina "${from}".
+Nivel del estudiante: ${LEVELS[level]} Ajusta la dificultad de las preguntas y el lenguaje a ese nivel.
 ${known.length
     ? `También sabe: ${known.join(", ")}. Llena "puentes" con 1 a 3 conexiones concretas con esas disciplinas.`
     : `"puentes" debe ser [].`}
@@ -70,6 +79,7 @@ async function callModel(apiKey, model, prompt, timeoutMs) {
     if (["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST"].includes(finish)) return { err: "refused" };
     const text = (cand.content?.parts || []).filter((p) => !p.thought).map((p) => p.text || "").join("");
     if (finish === "MAX_TOKENS" || !text.trim()) return { err: "retry" };
+    try { JSON.parse(text); } catch { console.error(model, "JSON inválido"); return { err: "retry" }; }
     return { text };
   }
   return { err: "retry" };
@@ -107,6 +117,7 @@ export default async (request) => {
   const steps = Array.isArray(body.steps) && body.steps.length === 6
     ? body.steps.map((s, i) => ({ n: i + 1, name: clean(s?.name, 40), hint: clean(s?.hint, 120) }))
     : DEFAULT_STEPS;
+  const level = Math.min(5, Math.max(1, Math.round(Number(body.level) || 3)));
 
   const enc = new TextEncoder();
   const stream = new ReadableStream({
@@ -115,7 +126,7 @@ export default async (request) => {
       send(" ");
       const beat = setInterval(() => send(" "), 5000);
       try {
-        const { text, err } = await askGemini(apiKey, models.length ? models : DEFAULT_MODELS, buildPrompt(from, to, known, steps));
+        const { text, err } = await askGemini(apiKey, models.length ? models : DEFAULT_MODELS, buildPrompt(from, to, known, steps, level));
         send(text ? text : "\n@@ERROR:" + err);
       } finally {
         clearInterval(beat);
