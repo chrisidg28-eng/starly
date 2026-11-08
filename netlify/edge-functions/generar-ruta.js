@@ -27,8 +27,8 @@ ${known.length
     : `No ha aprendido otras disciplinas en Starly todavía: deja "puentes" como lista vacía.`}
 
 Tareas:
-1. Extrae de 4 a 5 principios clave de cada disciplina. Frases cortas de máximo 6 palabras.
-2. Conecta principios de la disciplina que domina (a) con los de la nueva (b): entre 5 y 7 enlaces. Cada enlace tiene tipo "igual" (funciona igual en ambas), "similar" (se parece, con matices) o "distinta" (parece igual pero funciona distinto; es una trampa común). Incluye al menos uno de cada tipo. Explica cada enlace en 1 o 2 frases.
+1. Extrae exactamente 4 principios clave de cada disciplina. Frases cortas de máximo 6 palabras.
+2. Conecta principios de la disciplina que domina (a) con los de la nueva (b): entre 5 y 6 enlaces. Cada enlace tiene tipo "igual" (funciona igual en ambas), "similar" (se parece, con matices) o "distinta" (parece igual pero funciona distinto; es una trampa común). Incluye al menos uno de cada tipo. Explica cada enlace en 1 o 2 frases.
 3. Escribe exactamente 6 preguntas de opción múltiple basadas en ese mapa, una por paso y en este orden:
 ${steps.map((s) => `   ${s.n}. ${s.name}: ${s.hint}.`).join("\n")}
    Cada pregunta tiene 3 opciones cortas (máximo 14 palabras), solo una correcta, y una explicación de 1 frase.
@@ -41,15 +41,17 @@ Escribe en español, tono cercano, tuteando al estudiante.`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function askGemini(apiKey, model, prompt) {
+async function askGemini(apiKey, model, prompt, thinking) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-  const payload = JSON.stringify({
+  // "minimal" es el nivel de razonamiento más rápido; si el modelo no lo acepta, se usa "low".
+  let level = thinking || "minimal";
+  const payload = () => JSON.stringify({
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
       responseMimeType: "application/json",
       temperature: 0.7,
       maxOutputTokens: 8192,
-      thinkingConfig: { thinkingLevel: "low" },
+      thinkingConfig: { thinkingLevel: level },
     },
   });
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -58,7 +60,7 @@ async function askGemini(apiKey, model, prompt) {
       res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-        body: payload,
+        body: payload(),
       });
     } catch (e) {
       console.error("Error de red:", e);
@@ -67,7 +69,8 @@ async function askGemini(apiKey, model, prompt) {
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
       console.error("Error de Gemini:", res.status, detail.slice(0, 500));
-      if (res.status === 503 && attempt < 2) { await sleep(3000 * (attempt + 1)); continue; }
+      if (res.status === 400 && level !== "low" && /thinking/i.test(detail)) { level = "low"; attempt--; continue; }
+      if (res.status === 503 && attempt < 2) { await sleep(1200 * (attempt + 1)); continue; }
       if (res.status === 401 || res.status === 403 || (res.status === 400 && /api key/i.test(detail))) return { err: "no_key" };
       if (res.status === 429 || res.status === 503) return { err: "rate_limited" };
       return { err: "upstream_error" };
@@ -91,6 +94,7 @@ export default async (request) => {
 
   const apiKey = Netlify.env.get("GEMINI_API_KEY");
   const model = Netlify.env.get("GEMINI_MODEL") || DEFAULT_MODEL;
+  const thinking = Netlify.env.get("GEMINI_THINKING") || "minimal";
   if (!apiKey) return jsonError("no_key", 500);
 
   let body;
@@ -109,7 +113,7 @@ export default async (request) => {
       send(" ");
       const beat = setInterval(() => send(" "), 8000);
       try {
-        const { text, err } = await askGemini(apiKey, model, buildPrompt(from, to, known, steps));
+        const { text, err } = await askGemini(apiKey, model, buildPrompt(from, to, known, steps), thinking);
         send(text ? text : "\n@@ERROR:" + err);
       } finally {
         clearInterval(beat);

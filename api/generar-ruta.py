@@ -49,8 +49,8 @@ Disciplina que quiere aprender: "{to}"
 {known_line}
 
 Tareas:
-1. Extrae de 4 a 5 principios clave de cada disciplina. Frases cortas de máximo 6 palabras.
-2. Conecta principios de la disciplina que domina (a) con los de la nueva (b): entre 5 y 7 enlaces. Cada enlace tiene tipo "igual" (funciona igual en ambas), "similar" (se parece, con matices) o "distinta" (parece igual pero funciona distinto; es una trampa común). Incluye al menos uno de cada tipo. Explica cada enlace en 1 o 2 frases.
+1. Extrae exactamente 4 principios clave de cada disciplina. Frases cortas de máximo 6 palabras.
+2. Conecta principios de la disciplina que domina (a) con los de la nueva (b): entre 5 y 6 enlaces. Cada enlace tiene tipo "igual" (funciona igual en ambas), "similar" (se parece, con matices) o "distinta" (parece igual pero funciona distinto; es una trampa común). Incluye al menos uno de cada tipo. Explica cada enlace en 1 o 2 frases.
 3. Escribe exactamente 6 preguntas de opción múltiple basadas en ese mapa, una por paso y en este orden:
 {steps_text}
    Cada pregunta tiene 3 opciones cortas (máximo 14 palabras), solo una correcta, y una explicación de 1 frase.
@@ -86,7 +86,7 @@ def ask_gemini(prompt):
             detail = exc.read().decode("utf-8", "ignore")
             print("Error de Gemini:", exc.code, detail[:500])
             if exc.code == 503 and attempt < 2:
-                time.sleep(3 * (attempt + 1))
+                time.sleep(1.2 * (attempt + 1))
                 continue
             if exc.code in (401, 403) or (exc.code == 400 and "api key" in detail.lower()):
                 return None, "no_key"
