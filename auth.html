@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Starly · Cuenta</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+  :root {
+    --bg: #eef0fb;
+    --card: #ffffff;
+    --ink: #1b1f3b;
+    --muted: #5d6385;
+    --line: #d8dcf2;
+    --accent: #4b3fe0;
+    --accent-ink: #ffffff;
+    --star: #ffc93c;
+    --err: #b3261e;
+    --ok: #1d7a4b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12142b;
+      --card: #1b1e3d;
+      --ink: #eef0ff;
+      --muted: #a2a8d0;
+      --line: #2c3060;
+      --accent: #8f86ff;
+      --accent-ink: #12142b;
+      --err: #ff8f87;
+      --ok: #6fd9a0;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    font-family: "Bricolage Grotesque", system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    display: grid;
+    place-items: center;
+    padding: 24px;
+  }
+  main { width: 100%; max-width: 400px; }
+  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; font-weight: 800; font-size: 1.5rem; letter-spacing: -0.02em; }
+  .brand svg { width: 28px; height: 28px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 28px; }
+  h1 { font-size: 1.6rem; line-height: 1.15; margin: 0 0 6px; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); margin: 0 0 22px; font-size: 0.95rem; line-height: 1.5; }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--bg); padding: 4px; border-radius: 10px; margin-bottom: 22px; }
+  .tabs button { font: inherit; font-weight: 600; border: 0; background: transparent; color: var(--muted); padding: 9px; border-radius: 7px; cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 0 var(--line); }
+  label { display: block; font-size: 0.88rem; font-weight: 600; margin: 0 0 6px; }
+  input { width: 100%; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; margin-bottom: 14px; }
+  input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .primary { width: 100%; font: inherit; font-weight: 600; border: 0; border-radius: 10px; padding: 12px; background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+  .primary:disabled { opacity: 0.6; cursor: wait; }
+  .link { background: none; border: 0; font: inherit; color: var(--accent); padding: 0; cursor: pointer; text-decoration: underline; }
+  .row { margin-top: 14px; font-size: 0.9rem; color: var(--muted); }
+  .msg { min-height: 1.3em; margin: 14px 0 0; font-size: 0.9rem; line-height: 1.4; }
+  .msg.err { color: var(--err); }
+  .msg.ok { color: var(--ok); }
+  .hidden { display: none !important; }
+  .who { padding: 14px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 18px; }
+  .who strong { display: block; font-size: 1.1rem; }
+  .who span { color: var(--muted); font-size: 0.9rem; word-break: break-all; }
+  @media (prefers-reduced-motion: no-preference) {
+    .primary { transition: transform 0.12s ease; }
+    .primary:active { transform: scale(0.98); }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#ffc93c" d="M12 1.5l3 6.9 7.5.7-5.7 5 1.7 7.4L12 17.5l-6.5 4 1.7-7.4-5.7-5 7.5-.7z"/></svg>
+    Starly
+  </div>
+
+  <section class="card" id="guest" aria-live="polite">
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tab-login" aria-selected="true">Iniciar sesión</button>
+      <button role="tab" id="tab-signup" aria-selected="false">Crear cuenta</button>
+    </div>
+
+    <form id="form-login" novalidate>
+      <h1>Bienvenido de vuelta</h1>
+      <p class="sub">Entra con tu correo y contraseña.</p>
+      <label for="l-email">Correo</label>
+      <input id="l-email" type="email" autocomplete="email" required>
+      <label for="l-pass">Contraseña</label>
+      <input id="l-pass" type="password" autocomplete="current-password" required>
+      <button class="primary" type="submit">Iniciar sesión</button>
+      <p class="row"><button class="link" type="button" id="forgot">Olvidé mi contraseña</button></p>
+    </form>
+
+    <form id="form-signup" class="hidden" novalidate>
+      <h1>Crea tu cuenta</h1>
+      <p class="sub">Solo te toma un minuto. Te enviaremos un correo para confirmarla.</p>
+      <label for="s-name">Nombre</label>
+      <input id="s-name" type="text" autocomplete="name" required>
+      <label for="s-email">Correo</label>
+      <input id="s-email" type="email" autocomplete="email" required>
+      <label for="s-pass">Contraseña (mínimo 6 caracteres)</label>
+      <input id="s-pass" type="password" autocomplete="new-password" minlength="6" required>
+      <button class="primary" type="submit">Crear cuenta</button>
+    </form>
+
+    <p class="msg" id="msg" role="status"></p>
+  </section>
+
+  <section class="card hidden" id="recovery">
+    <h1>Nueva contraseña</h1>
+    <p class="sub">Elige una contraseña nueva para tu cuenta.</p>
+    <form id="form-recovery" novalidate>
+      <label for="r-pass">Contraseña nueva</label>
+      <input id="r-pass" type="password" autocomplete="new-password" minlength="6" required>
+      <button class="primary" type="submit">Guardar contraseña</button>
+    </form>
+    <p class="msg" id="msg-recovery" role="status"></p>
+  </section>
+
+  <section class="card hidden" id="account">
+    <h1 id="hello">Hola</h1>
+    <p class="sub">Tu sesión está activa.</p>
+    <div class="who"><strong id="who-name"></strong><span id="who-email"></span></div>
+    <form id="form-profile" novalidate>
+      <label for="p-name">Nombre</label>
+      <input id="p-name" type="text" autocomplete="name">
+      <button class="primary" type="submit">Guardar cambios</button>
+    </form>
+    <p class="row"><button class="link" type="button" id="logout">Cerrar sesión</button></p>
+    <p class="msg" id="msg-account" role="status"></p>
+  </section>
+</main>
+
+<script>
+  const SUPABASE_URL = 'https://dxltbofpzyffcbqwpwtw.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_9n1F7V2dUQYyQ5dD6xQTDQ_31ck857R';
+  const db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  const $ = (id) => document.getElementById(id);
+  const REDIRECT = location.origin + location.pathname;
+
+  const ERRORS = {
+    'Invalid login credentials': 'Correo o contraseña incorrectos.',
+    'Email not confirmed': 'Primero confirma tu correo con el enlace que te enviamos.',
+    'User already registered': 'Ya existe una cuenta con ese correo.',
+    'Password should be at least 6 characters.': 'La contraseña debe tener al menos 6 caracteres.'
+  };
+  const say = (el, text, type) => { el.textContent = text || ''; el.className = 'msg ' + (type || ''); };
+  const humanize = (e) => ERRORS[e.message] || e.message;
+  const busy = (form, on) => form.querySelectorAll('button[type="submit"]').forEach(b => b.disabled = on);
+
+  // Tabs
+  function showTab(which) {
+    const login = which === 'login';
+    $('tab-login').setAttribute('aria-selected', login);
+    $('tab-signup').setAttribute('aria-selected', !login);
+    $('form-login').classList.toggle('hidden', !login);
+    $('form-signup').classList.toggle('hidden', login);
+    say($('msg'), '');
+  }
+  $('tab-login').onclick = () => showTab('login');
+  $('tab-signup').onclick = () => showTab('signup');
+
+  // Registro
+  $('form-signup').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    busy(form, true);
+    const { data, error } = await db.auth.signUp({
+      email: $('s-email').value.trim(),
+      password: $('s-pass').value,
+      options: { data: { nombre: $('s-name').value.trim() }, emailRedirectTo: REDIRECT }
+    });
+    busy(form, false);
+    if (error) return say($('msg'), humanize(error), 'err');
+    // Si el correo ya existe, Supabase devuelve identities vacío
+    if (data.user && data.user.identities && data.user.identities.length === 0) {
+      return say($('msg'), 'Ya existe una cuenta con ese correo.', 'err');
+    }
+    if (data.session) return; // confirmación de correo desactivada: onAuthStateChange se encarga
+    form.reset();
+    say($('msg'), 'Cuenta creada. Revisa tu correo y toca el enlace para confirmarla.', 'ok');
+  });
+
+  // Login
+  $('form-login').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    busy(form, true);
+    const { error } = await db.auth.signInWithPassword({
+      email: $('l-email').value.trim(),
+      password: $('l-pass').value
+    });
+    busy(form, false);
+    if (error) say($('msg'), humanize(error), 'err');
+  });
+
+  // Recuperar contraseña
+  $('forgot').onclick = async () => {
+    const email = $('l-email').value.trim();
+    if (!email) return say($('msg'), 'Escribe tu correo arriba y vuelve a tocar “Olvidé mi contraseña”.', 'err');
+    const { error } = await db.auth.resetPasswordForEmail(email, { redirectTo: REDIRECT });
+    if (error) return say($('msg'), humanize(error), 'err');
+    say($('msg'), 'Te enviamos un enlace para restablecer tu contraseña.', 'ok');
+  };
+
+  $('form-recovery').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const { error } = await db.auth.updateUser({ password: $('r-pass').value });
+    if (error) return say($('msg-recovery'), humanize(error), 'err');
+    say($('msg-recovery'), 'Contraseña actualizada.', 'ok');
+    setTimeout(() => render((window.__session) || null), 900);
+  });
+
+  // Perfil
+  async function loadProfile(user) {
+    const meta = (user.user_metadata && user.user_metadata.nombre) || '';
+    let nombre = meta;
+    const { data, error } = await db.from('profiles').select('nombre').eq('id', user.id).maybeSingle();
+    if (!error && data && data.nombre) nombre = data.nombre;
+    return nombre;
+  }
+
+  $('form-profile').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const { data: { user } } = await db.auth.getUser();
+    const nombre = $('p-name').value.trim();
+    const { error } = await db.from('profiles').upsert({ id: user.id, nombre });
+    if (error) return say($('msg-account'), 'No se pudo guardar: ' + error.message, 'err');
+    $('who-name').textContent = nombre || 'Sin nombre';
+    $('hello').textContent = nombre ? 'Hola, ' + nombre : 'Hola';
+    say($('msg-account'), 'Cambios guardados.', 'ok');
+  });
+
+  $('logout').onclick = () => db.auth.signOut();
+
+  // Render según sesión
+  async function render(session) {
+    window.__session = session;
+    $('recovery').classList.add('hidden');
+    $('guest').classList.toggle('hidden', !!session);
+    $('account').classList.toggle('hidden', !session);
+    if (!session) return;
+    const user = session.user;
+    const nombre = await loadProfile(user);
+    $('hello').textContent = nombre ? 'Hola, ' + nombre : 'Hola';
+    $('who-name').textContent = nombre || 'Sin nombre';
+    $('who-email').textContent = user.email;
+    $('p-name').value = nombre;
+    say($('msg-account'), '');
+  }
+
+  db.auth.onAuthStateChange((event, session) => {
+    if (event === 'PASSWORD_RECOVERY') {
+      $('guest').classList.add('hidden');
+      $('account').classList.add('hidden');
+      $('recovery').classList.remove('hidden');
+      window.__session = session;
+      return;
+    }
+    // Evita llamadas a Supabase dentro del callback
+    setTimeout(() => render(session), 0);
+  });
+</script>
+</body>
+</html>
