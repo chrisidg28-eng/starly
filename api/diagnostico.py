@@ -6,6 +6,7 @@ Usa la misma cadena de modelos rápidos que generar-ruta.
 """
 
 import json
+import random
 import os
 import time
 import urllib.error
@@ -35,6 +36,28 @@ def clean(value, max_len=60):
     return text.strip()[:max_len]
 
 
+CONTEXTOS = ["la escuela", "un partido de fútbol", "la cocina de casa", "un videojuego", "un viaje", "una tienda",
+             "redes sociales", "un proyecto en equipo", "la naturaleza", "una fiesta", "un trabajo de medio tiempo",
+             "una película", "un hospital", "una banda de música", "una competencia", "la ciudad"]
+TIPOS = ["un caso de la vida real", "una definición con tus palabras", "una comparación entre las dos disciplinas",
+         "qué pasaría si", "detectar un error en un razonamiento", "elegir el mejor siguiente paso", "una analogía"]
+
+
+def build_practice_prompt(from_, to, level, temas, evitar, cantidad):
+    temas_line = f"Principios de la ruta: {'; '.join(temas)}." if temas else ""
+    evitar_line = ("NO repitas ni parafrasees ninguna de estas preguntas que ya vio:\n- " + "\n- ".join(evitar)) if evitar else ""
+    return f"""Eres el creador de ejercicios de Starly. El estudiante domina "{from_}" y está aprendiendo "{to}".
+Nivel del estudiante: {LEVELS[level]}. Todas las preguntas deben ser de ese nivel.
+{temas_line}
+Escribe {cantidad} preguntas NUEVAS de opción múltiple sobre "{to}", conectándolo con "{from_}" cuando ayude.
+Varía mucho el estilo: usa {", ".join(random.sample(TIPOS, 4))}. Ambienta algunas en {", ".join(random.sample(CONTEXTOS, 3))}.
+{evitar_line}
+"paso" (1-6) indica qué habilidad practica: 1 reconocer, 2 descomponer, 3 comparar, 4 traducir, 5 detectar trampas, 6 aplicar. Reparte los pasos.
+Cada pregunta: 3 opciones cortas (máx. 12 palabras), la correcta en una posición al azar, "correcta" es su índice (0-2), "porque" 1 frase, "nivel" {level}.
+Solo JSON, en español, tuteando:
+{{"preguntas":[{{"q":"","opciones":["","",""],"correcta":0,"porque":"","nivel":{level},"paso":1}}]}}"""
+
+
 def build_prompt(from_, to, level, temas):
     lv = [min(5, level + d) for d in (0, 0, 1, 1, 1, 2, 2)]
     temas_line = f"Temas que acaba de practicar: {'; '.join(temas)}." if temas else ""
@@ -54,6 +77,7 @@ SCHEMA = {
     "properties": {"preguntas": {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
         "q": {"type": "STRING"}, "opciones": {"type": "ARRAY", "items": {"type": "STRING"}},
         "correcta": {"type": "INTEGER"}, "porque": {"type": "STRING"}, "nivel": {"type": "INTEGER"},
+        "paso": {"type": "INTEGER"},
     }, "required": ["q", "opciones", "correcta", "porque", "nivel"]}}},
     "required": ["preguntas"],
 }
@@ -63,7 +87,7 @@ def call_model(model, prompt, timeout):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
     thinking = True
     for _ in range(2):
-        config = {"responseMimeType": "application/json", "responseSchema": SCHEMA, "temperature": 0.7, "maxOutputTokens": 2000}
+        config = {"responseMimeType": "application/json", "responseSchema": SCHEMA, "temperature": 0.9, "maxOutputTokens": 2600}
         if thinking:
             config["thinkingConfig"] = {"thinkingLevel": "minimal"}
         payload = json.dumps({"contents": [{"role": "user", "parts": [{"text": prompt}]}],
@@ -147,5 +171,15 @@ class handler(BaseHTTPRequestHandler):
             level = 3
         temas = body.get("temas") if isinstance(body.get("temas"), list) else []
         temas = [t for t in (clean(x, 80) for x in temas[:8]) if t]
-        text, err = ask(build_prompt(from_, to, level, temas))
+        evitar = body.get("evitar") if isinstance(body.get("evitar"), list) else []
+        evitar = [t for t in (clean(x, 160) for x in evitar[-40:]) if t]
+        try:
+            cantidad = min(10, max(3, int(body.get("cantidad") or 8)))
+        except (TypeError, ValueError):
+            cantidad = 8
+        if body.get("modo") == "practica":
+            prompt = build_practice_prompt(from_, to, level, temas, evitar, cantidad)
+        else:
+            prompt = build_prompt(from_, to, level, temas)
+        text, err = ask(prompt)
         self._send(200, text if text else "@@ERROR:" + err)

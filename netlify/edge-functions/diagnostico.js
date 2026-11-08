@@ -1,7 +1,10 @@
-// Diagnóstico de Starly para Netlify ("el pollo cruza la calle").
-// Ruta: POST /api/diagnostico   Body: { from, to, level: 1-5, temas: string[] }
-// Responde texto: {"preguntas":[...]} con 7 preguntas de dificultad creciente,
-// o "@@ERROR:<código>". Usa la misma cadena de modelos rápidos que generar-ruta.
+// Preguntas de Starly para Netlify.
+// Ruta: POST /api/diagnostico
+//   Diagnóstico ("el pollo cruza la calle"): { from, to, level: 1-5, temas: string[] }
+//     -> 7 preguntas de dificultad creciente.
+//   Práctica (banco de preguntas nuevas): { modo: "practica", from, to, level, temas, evitar: string[], cantidad }
+//     -> preguntas nuevas al nivel del estudiante, distintas de las de "evitar".
+// Responde texto: {"preguntas":[...]} o "@@ERROR:<código>". Usa la misma cadena de modelos rápidos que generar-ruta.
 const DEFAULT_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-flash-lite-latest", "gemini-3.5-flash"];
 const PER_MODEL_TIMEOUT_MS = 20000;
 const TOTAL_BUDGET_MS = 50000;
@@ -30,12 +33,33 @@ Solo JSON, en español, tuteando:
 {"preguntas":[{"q":"","opciones":["","",""],"correcta":0,"porque":"","nivel":${lv[0]}}]}`;
 }
 
+// Contextos y estilos al azar para que cada tanda de práctica sea distinta.
+const CONTEXTOS = ["la escuela", "un partido de fútbol", "la cocina de casa", "un videojuego", "un viaje", "una tienda",
+  "redes sociales", "un proyecto en equipo", "la naturaleza", "una fiesta", "un trabajo de medio tiempo", "una película",
+  "un hospital", "una banda de música", "una competencia", "la ciudad"];
+const TIPOS = ["un caso de la vida real", "una definición con tus palabras", "una comparación entre las dos disciplinas",
+  "qué pasaría si", "detectar un error en un razonamiento", "elegir el mejor siguiente paso", "una analogía"];
+const pick = (arr, n) => [...arr].sort(() => Math.random() - 0.5).slice(0, n);
+
+function buildPracticePrompt(from, to, level, temas, evitar, cantidad) {
+  return `Eres el creador de ejercicios de Starly. El estudiante domina "${from}" y está aprendiendo "${to}".
+Nivel del estudiante: ${LEVELS[level]}. Todas las preguntas deben ser de ese nivel.
+${temas.length ? `Principios de la ruta: ${temas.join("; ")}.` : ""}
+Escribe ${cantidad} preguntas NUEVAS de opción múltiple sobre "${to}", conectándolo con "${from}" cuando ayude.
+Varía mucho el estilo: usa ${pick(TIPOS, 4).join(", ")}. Ambienta algunas en ${pick(CONTEXTOS, 3).join(", ")}.
+${evitar.length ? `NO repitas ni parafrasees ninguna de estas preguntas que ya vio:\n- ${evitar.join("\n- ")}` : ""}
+"paso" (1-6) indica qué habilidad practica: 1 reconocer, 2 descomponer, 3 comparar, 4 traducir, 5 detectar trampas, 6 aplicar. Reparte los pasos.
+Cada pregunta: 3 opciones cortas (máx. 12 palabras), la correcta en una posición al azar, "correcta" es su índice (0-2), "porque" 1 frase, "nivel" ${level}.
+Solo JSON, en español, tuteando:
+{"preguntas":[{"q":"","opciones":["","",""],"correcta":0,"porque":"","nivel":${level},"paso":1}]}`;
+}
+
 // Esquema: obliga al modelo a devolver JSON válido con esta forma.
 const SCHEMA = {
   type: "OBJECT",
   properties: { preguntas: { type: "ARRAY", items: { type: "OBJECT", properties: {
     q: { type: "STRING" }, opciones: { type: "ARRAY", items: { type: "STRING" } },
-    correcta: { type: "INTEGER" }, porque: { type: "STRING" }, nivel: { type: "INTEGER" },
+    correcta: { type: "INTEGER" }, porque: { type: "STRING" }, nivel: { type: "INTEGER" }, paso: { type: "INTEGER" },
   }, required: ["q", "opciones", "correcta", "porque", "nivel"] } } },
   required: ["preguntas"],
 };
@@ -44,7 +68,7 @@ async function callModel(apiKey, model, prompt, timeoutMs) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   let thinking = true;
   for (let tries = 0; tries < 2; tries++) {
-    const generationConfig = { responseMimeType: "application/json", responseSchema: SCHEMA, temperature: 0.7, maxOutputTokens: 2000 };
+    const generationConfig = { responseMimeType: "application/json", responseSchema: SCHEMA, temperature: 0.9, maxOutputTokens: 2600 };
     if (thinking) generationConfig.thinkingConfig = { thinkingLevel: "minimal" };
     let res;
     try {
@@ -104,6 +128,10 @@ export default async (request) => {
   if (!from || !to) return jsonError("bad_request", 400);
   const level = Math.min(5, Math.max(1, Math.round(Number(body.level) || 3)));
   const temas = Array.isArray(body.temas) ? body.temas.slice(0, 8).map((t) => clean(t, 80)).filter(Boolean) : [];
+  const practica = body.modo === "practica";
+  const evitar = Array.isArray(body.evitar) ? body.evitar.slice(-40).map((t) => clean(t, 160)).filter(Boolean) : [];
+  const cantidad = Math.min(10, Math.max(3, Math.round(Number(body.cantidad) || 8)));
+  const prompt = practica ? buildPracticePrompt(from, to, level, temas, evitar, cantidad) : buildPrompt(from, to, level, temas);
 
   const enc = new TextEncoder();
   const stream = new ReadableStream({
@@ -112,7 +140,7 @@ export default async (request) => {
       send(" ");
       const beat = setInterval(() => send(" "), 5000);
       try {
-        const { text, err } = await ask(apiKey, models.length ? models : DEFAULT_MODELS, buildPrompt(from, to, level, temas));
+        const { text, err } = await ask(apiKey, models.length ? models : DEFAULT_MODELS, prompt);
         send(text ? text : "\n@@ERROR:" + err);
       } finally {
         clearInterval(beat);

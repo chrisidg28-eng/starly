@@ -518,7 +518,7 @@ async function generate(from, to){
     const r = validRoute(j, from, to);
     if(r) r.level = lvl();
     if(!r){ ideas = {...ideas, status:"idle", error:"La respuesta de la IA vino incompleta. Prueba otra vez o cambia un poco los nombres."}; }
-    else { S.routes.push(r); S.active=r.id; S.known[from]=Math.max(S.known[from]||0,40); S.known[to]=S.known[to]||10; save(); ideas = {...ideas, status:"idle", routeId:r.id, sel:-1}; toast("Ruta guardada en Mi red"); }
+    else { S.routes.push(r); S.active=r.id; S.known[from]=Math.max(S.known[from]||0,40); S.known[to]=S.known[to]||10; save(); ideas = {...ideas, status:"idle", routeId:r.id, sel:-1}; toast("Ruta guardada en Mi red"); topUpPool(r); }
   }catch(e){
     const code=e && e.code;
     const msg = code==="cancelled" ? ""
@@ -556,6 +556,59 @@ async function regenerateRoute(id, quiet){
   if(!game || game.done) render();
 }
 
+/* ================= banco de preguntas =================
+   Cada ruta junta sus 6 preguntas originales + preguntas nuevas que la IA va creando.
+   En cada juego se eligen las 6 menos vistas y se revuelven; cuando quedan pocas sin ver,
+   se piden más en segundo plano (sin repetir las que ya salieron). */
+const PER_GAME = 6, POOL_MAX = 60;
+const qKey = q => String(q.q||"").trim().toLowerCase();
+function parseQs(text, level){
+  const j=JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}")+1));
+  return (j.preguntas||[]).map(q=>({q:String(q.q||""), options:(q.opciones||[]).map(String).slice(0,4), answer:Number(q.correcta)||0,
+    why:String(q.porque||""), level:Number(q.nivel)||level, step:Math.min(6,Math.max(1,Number(q.paso)||1))}))
+    .filter(q=>q.q && q.options.length>=2 && q.answer<q.options.length);
+}
+function poolOf(r){
+  S.pools = S.pools || {};
+  let p=S.pools[r.id];
+  if(!p || p.level!==routeLevel(r)) p = S.pools[r.id] = {level:routeLevel(r), qs:[], seen:{}};   // nivel nuevo → banco nuevo
+  return p;
+}
+function questionBank(r){
+  const seenKey=new Set();
+  return [...r.questions, ...poolOf(r).qs].filter(q=>{ const k=qKey(q); if(seenKey.has(k)) return false; seenKey.add(k); return true; });
+}
+function pickQuestions(r){
+  const p=poolOf(r);
+  const ranked = shuffle(questionBank(r)).sort((a,b)=>(p.seen[qKey(a)]||0)-(p.seen[qKey(b)]||0));
+  const chosen = shuffle(ranked.slice(0, PER_GAME));
+  chosen.forEach(q=>{ p.seen[qKey(q)]=(p.seen[qKey(q)]||0)+1; });
+  save();
+  return chosen;
+}
+const poolBusy = {};
+async function topUpPool(r){
+  const p=poolOf(r), bank=questionBank(r);
+  if(poolBusy[r.id] || bank.filter(q=>!p.seen[qKey(q)]).length >= PER_GAME) return;
+  poolBusy[r.id]=true;
+  try{
+    const res = await fetch("/api/diagnostico", {method:"POST", headers:{"Content-Type":"application/json"}, signal:AbortSignal.timeout(45000),
+      body:JSON.stringify({modo:"practica", from:r.from, to:r.to, level:routeLevel(r), temas:[...r.a,...r.b].map(x=>x.t), evitar:bank.map(q=>q.q).slice(-40), cantidad:8})});
+    if(res.ok){
+      const text=await res.text();
+      if(!text.includes("@@ERROR")){
+        const known=new Set(bank.map(qKey));
+        const fresh=parseQs(text, routeLevel(r)).filter(q=>!known.has(qKey(q)));
+        const pool=poolOf(r);
+        pool.qs.push(...fresh);
+        if(pool.qs.length>POOL_MAX) pool.qs=pool.qs.slice(-POOL_MAX);
+        save();
+      }
+    }
+  }catch(e){ /* sin conexión: se siguen usando las que hay */ }
+  delete poolBusy[r.id];
+}
+
 /* ================= motor de juegos ================= */
 let game = null;
 function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
@@ -564,11 +617,13 @@ function startGame(id, mode){
   mode = GAMES[mode] ? mode : "quick";
   const r=routeById(id), cfg=GAMES[mode]; S.active=r.id; save();
   const lives = livesFor(cfg);
-  game = {mode, routeId:r.id, total:r.questions.length, queue:r.questions.map((_,i)=>i),
+  const qs = pickQuestions(r);   // 6 preguntas distintas cada vez y en orden al azar
+  topUpPool(r);                  // pide más a la IA si ya quedan pocas sin ver
+  game = {mode, routeId:r.id, qs, total:qs.length, queue:qs.map((_,i)=>i),
     progress:0, prev:0, lives, prevLives:lives, maxLives:lives,
     answered:false, picked:-1, ok:false, fx:null, done:false, won:false,
     earned:0, correct:0, first:0, mistakes:0, tries:{}, combo:0, lastGain:0,
-    orders:r.questions.map(q=>shuffle(q.options.map((_,k)=>k)))};
+    orders:qs.map(q=>shuffle(q.options.map((_,k)=>k)))};
   const target = mode==="quick" ? "leccion" : "jugar";
   if(view===target){ render(); window.scrollTo(0,0); } else go(target);
 }
@@ -699,7 +754,7 @@ function scene(end){
 function viewGame(){
   const r=routeById(game.routeId);
   if(game.done) return viewResult(r);
-  const qi=game.queue[0], q=r.questions[qi], step=STEPS[(q.step||qi+1)-1]||STEPS[0];
+  const qi=game.queue[0], q=game.qs[qi], step=STEPS[(q.step||1)-1]||STEPS[0];
   const order=game.orders[qi], ok=game.answered && game.ok, retry=(game.tries[qi]||0)>0 && !game.answered;
   const keys=`Toca una respuesta o pulsa 1, 2${order.length>2?", 3":""}${order.length>3?", 4":""}.`;
   const optCls = k => !game.answered ? "" : k===q.answer ? "ok" : k===game.picked ? "bad" : "fade";
@@ -772,7 +827,7 @@ function placeFrog(target, animate){
 
 function pick(k){
   if(!game || game.answered || game.done) return;
-  const r=routeById(game.routeId), qi=game.queue[0], q=r.questions[qi];
+  const qi=game.queue[0], q=game.qs[qi];
   const ok = k===q.answer;
   document.querySelectorAll("[data-pick]").forEach(p=>p.disabled=true);
   const apply = ()=>{
@@ -891,7 +946,7 @@ function viewOnboardingResult(){
 
 /* ================= Diagnóstico tras cada actividad: el pollo cruza la calle ================= */
 function fallbackDiagQs(r){
-  return shuffle(r.questions.map(q=>({q:q.q, options:q.options, answer:q.answer, why:q.why, level:routeLevel(r)}))).slice(0,7);
+  return shuffle(questionBank(r).map(q=>({q:q.q, options:q.options, answer:q.answer, why:q.why, level:q.level||routeLevel(r)}))).slice(0,7);
 }
 // Pide las preguntas por adelantado (mientras el estudiante ve su resultado).
 function prefetchDiag(id){
