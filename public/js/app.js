@@ -159,11 +159,13 @@ function renderNav(){
   const dark = isDark(), user = currentUser();
   const themeLabel = dark ? "Modo claro" : "Modo oscuro";
   const themeBtn = cls => `<button class="${cls} theme-btn" data-theme-toggle aria-label="Cambiar a ${themeLabel.toLowerCase()}" title="${themeLabel}">${icon(dark?"i-sun":"i-moon")}<span>${themeLabel}</span></button>`;
+  const sOn = window.SFX && SFX.on();
+  const soundBtn = cls => `<button class="${cls}" data-sound-toggle aria-pressed="${sOn}" title="${sOn?"Silenciar sonidos":"Activar sonidos"}">${icon(sOn?"i-sound":"i-mute")}<span>${sOn?"Sonido activado":"Sonido apagado"}</span></button>`;
   const acct = cls => `<a class="${cls} acct-btn" href="auth.html" title="${user?esc(user.email):"Iniciar sesión"}">${user?`<span class="avatar-mini">${esc(user.name[0]||"?").toUpperCase()}</span>`:icon("i-user")}<span>${user?esc(user.name):"Iniciar sesión"}</span></a>`;
   $("#sideNav").innerHTML = NAV.map(n=>`<button class="nav-btn" data-go="${n.id}" ${cur===n.id?'aria-current="page"':''}>${icon(n.ico)}<span>${n.label}</span></button>`).join("")
-    + `<div class="side-foot">${acct("nav-btn")}${themeBtn("nav-btn")}</div>`;
+    + `<div class="side-foot">${acct("nav-btn")}${soundBtn("nav-btn")}${themeBtn("nav-btn")}</div>`;
   $("#tabbar").innerHTML = NAV.map(n=>`<button class="tab" data-go="${n.id}" ${cur===n.id?'aria-current="page"':''}>${icon(n.ico)}${n.short}</button>`).join("");
-  $("#mobileHead").innerHTML = `<div class="brand">${sym("star")}<span>starly</span></div><div class="mh-actions">${acct("icon-btn")}${themeBtn("icon-btn")}</div>`;
+  $("#mobileHead").innerHTML = `<div class="brand">${sym("star")}<span>starly</span></div><div class="mh-actions">${acct("icon-btn")}${soundBtn("icon-btn")}${themeBtn("icon-btn")}</div>`;
 }
 
 /* ================= league ================= */
@@ -611,6 +613,7 @@ function pick(k){
     if(ok){ game.correct++; game.progress++; game.combo++; game.lastGain = game.tries[qi]===1 ? 10 : 5; game.earned += game.lastGain; if(game.tries[qi]===1) game.first++; }
     else { game.mistakes++; game.combo=0; game.lastGain=0; if(game.maxLives) game.lives--; }
     game.fx = ok ? "ok" : "bad";
+    if(window.SFX) SFX.play(ok ? "ok" : "bad");
     render();
     if(game.mode==="frog"){
       const f=$("#frog"); placeFrog(document.querySelector(`[data-pick="${k}"]`), false); f.classList.add(ok?"cheer":"sink");
@@ -643,6 +646,7 @@ function nextQ(){
     }
     const real=S.routes.find(x=>x.id===r.id); if(real){ if(game.won) real.best=Math.max(real.best||0, game.first); real.plays=(real.plays||0)+1; save(); }
     game.done=true;
+    if(window.SFX) setTimeout(()=>SFX.play(game && game.won ? "win" : "lose"), 150);
   }
   render(); window.scrollTo({top:0});
 }
@@ -784,6 +788,7 @@ document.addEventListener("click", e=>{
   const t=e.target;
   let b;
   if(t.closest("[data-theme-toggle]")){ toggleTheme(); return; }
+  if(t.closest("[data-sound-toggle]")){ SFX.toggle(); renderNav(); return; }
   if((b=t.closest("[data-go]"))){ e.preventDefault(); if(b.dataset.go==="juegos"||b.dataset.go==="leccion") game=null; go(b.dataset.go); return; }
   if((b=t.closest("[data-pickgame]"))){ pendingMode=b.dataset.pickgame; game=null; go("jugar"); return; }
   if((b=t.closest("[data-pair]"))){ const [a,c]=b.dataset.pair.split("|"); $("#fFrom").value=a; $("#fTo").value=c; ideas.from=a; ideas.to=c; return; }
